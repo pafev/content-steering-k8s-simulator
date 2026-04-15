@@ -261,6 +261,17 @@ spec:
       name: delivery-node-caddyfile
 ---
 apiVersion: v1
+kind: Service
+metadata:
+  name: dash-client
+spec:
+  selector:
+    app: dash-client
+  ports:
+  - name: http
+    port: 80
+---
+apiVersion: v1
 kind: Pod
 metadata:
   name: dash-client
@@ -273,65 +284,28 @@ spec:
     imagePullPolicy: Always
     ports:
     - containerPort: 80
-    - containerPort: 8001
-    - containerPort: 8002
-    - containerPort: 8003
-    - containerPort: 30500
-    volumeMounts:
-    - name: cert-steering
-      mountPath: /etc/nginx/certs/steering-server.pem
-      subPath: steering-server.pem
-      readOnly: true
-    - name: cert-steering-key
-      mountPath: /etc/nginx/certs/steering-server-key.pem
-      subPath: steering-server-key.pem
-      readOnly: true
-    - name: cert-node1
-      mountPath: /etc/nginx/certs/delivery-node-1.pem
-      subPath: delivery-node.pem
-      readOnly: true
-    - name: cert-node1-key
-      mountPath: /etc/nginx/certs/delivery-node-1-key.pem
-      subPath: delivery-node-key.pem
-      readOnly: true
-    - name: cert-node2
-      mountPath: /etc/nginx/certs/delivery-node-2.pem
-      subPath: delivery-node.pem
-      readOnly: true
-    - name: cert-node2-key
-      mountPath: /etc/nginx/certs/delivery-node-2-key.pem
-      subPath: delivery-node-key.pem
-      readOnly: true
-    - name: cert-node3
-      mountPath: /etc/nginx/certs/delivery-node-3.pem
-      subPath: delivery-node.pem
-      readOnly: true
-    - name: cert-node3-key
-      mountPath: /etc/nginx/certs/delivery-node-3-key.pem
-      subPath: delivery-node-key.pem
-      readOnly: true
-  volumes:
-  - name: cert-steering
-    secret:
-      secretName: steering-server-certs
-  - name: cert-steering-key
-    secret:
-      secretName: steering-server-certs
-  - name: cert-node1
-    secret:
-      secretName: delivery-node-1-certs
-  - name: cert-node1-key
-    secret:
-      secretName: delivery-node-1-certs
-  - name: cert-node2
-    secret:
-      secretName: delivery-node-2-certs
-  - name: cert-node2-key
-    secret:
-      secretName: delivery-node-2-certs
-  - name: cert-node3
-    secret:
-      secretName: delivery-node-3-certs
-  - name: cert-node3-key
-    secret:
-      secretName: delivery-node-3-certs
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+spec:
+  selector:
+    app: gateway
+  ports:
+  - name: http
+    port: 80
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gateway
+  labels:
+    app: gateway
+spec:
+  containers:
+  - name: gateway
+    image: pafev/content-steering:gateway-latest
+    imagePullPolicy: Always
+    ports:
+    - containerPort: 80

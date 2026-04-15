@@ -158,7 +158,15 @@ def get_unique_log_filename(
 
 
 class Main:
-    def __init__(self, sel_inst, strategy_arg: str, log_file: str, log_suffix: str, host_suffix: str = ".default.svc.cluster.local", gateway_mode: bool = False):
+    def __init__(
+        self,
+        sel_inst,
+        strategy_arg: str,
+        log_file: str,
+        log_suffix: str,
+        host_suffix: str = ".default.svc.cluster.local",
+        gateway_mode: bool = False,
+    ):
         global selector_instance, current_strategy_name, active_log_filename
         selector_instance, current_strategy_name, active_log_filename = (
             sel_inst,
@@ -285,7 +293,12 @@ class Main:
             uri = f"{uri_scheme}://{service_host}"
             target = request.args.get("_DASH_pathway", "", str)
             resp = dash_parser.build(
-                target=target, nodes=nodes_p, uri=uri, request=request, host_suffix=self.host_suffix, gateway_mode=self.gateway_mode
+                target=target,
+                nodes=nodes_p,
+                uri=uri,
+                request=request,
+                host_suffix=self.host_suffix,
+                gateway_mode=self.gateway_mode,
             )
             return jsonify(resp), 200
 
