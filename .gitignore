@@ -4,5 +4,7 @@ results/
 logs/
 .venv/
 
+k8s-deploy-certs.yaml
+
 *.pyc
 *.pem
