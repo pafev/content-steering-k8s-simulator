@@ -1,0 +1,337 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: steering-server-sa
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pod-reader
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: read-pods
+subjects:
+- kind: ServiceAccount
+  name: steering-server-sa
+  namespace: default
+roleRef:
+  kind: ClusterRole
+  name: pod-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: steering-server
+spec:
+  selector:
+    app: steering-server
+  ports:
+  - name: https
+    protocol: TCP
+    port: 30500
+    targetPort: 30500
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: steering-server
+  labels:
+    app: steering-server
+spec:
+  serviceAccountName: steering-server-sa
+  containers:
+  - name: steering
+    image: pafev/content-steering:steering-server-latest
+    imagePullPolicy: Always
+    ports:
+    - containerPort: 30500
+    volumeMounts:
+    - name: certs
+      mountPath: /app/steering-server/certs
+      readOnly: true
+  volumes:
+  - name: certs
+    secret:
+      secretName: steering-server-certs
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: delivery-node-caddyfile
+  labels:
+    app: delivery-node
+data:
+  Caddyfile: |
+    (cors) {
+      @cors_preflight method OPTIONS
+
+      header {
+        Access-Control-Allow-Origin "*"
+        Access-Control-Expose-Headers "Authorization"
+      }
+
+      handle @cors_preflight {
+        header {
+          Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+          Access-Control-Allow-Headers "*"
+          Access-Control-Max-Age "3600"
+        }
+        respond "" 204
+      }
+    }
+
+
+    :80 {
+        root * /srv
+        file_server
+
+        import cors
+    }
+
+    :443 {
+        tls /root/certs/delivery-node.pem /root/certs/delivery-node-key.pem
+
+        root * /srv
+        file_server
+
+        import cors
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: delivery-node-1
+spec:
+  selector:
+    app: delivery-node
+    cache-id: "1"
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: 80
+  - name: https
+    protocol: TCP
+    port: 443
+    targetPort: 443
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: delivery-node-1
+  labels:
+    app: delivery-node
+    cache-id: "1"
+spec:
+  containers:
+  - name: caddy
+    image: pafev/content-steering:delivery-node-latest
+    imagePullPolicy: Always
+    env:
+    - name: LATITUDE
+      value: "-23.0"
+    - name: LONGITUDE
+      value: "-47.0"
+    ports:
+    - containerPort: 80
+    - containerPort: 443
+    volumeMounts:
+    - name: certs
+      mountPath: /root/certs
+      readOnly: true
+    - name: caddyfile
+      mountPath: /etc/caddy
+  volumes:
+  - name: certs
+    secret:
+      secretName: delivery-node-1-certs
+  - name: caddyfile
+    configMap:
+      name: delivery-node-caddyfile
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: delivery-node-2
+spec:
+  selector:
+    app: delivery-node
+    cache-id: "2"
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: 80
+  - name: https
+    protocol: TCP
+    port: 443
+    targetPort: 443
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: delivery-node-2
+  labels:
+    app: delivery-node
+    cache-id: "2"
+spec:
+  containers:
+  - name: caddy
+    image: pafev/content-steering:delivery-node-latest
+    imagePullPolicy: Always
+    env:
+    - name: LATITUDE
+      value: "-33.0"
+    - name: LONGITUDE
+      value: "-71.0"
+    ports:
+    - containerPort: 80
+    - containerPort: 443
+    volumeMounts:
+    - name: certs
+      mountPath: /root/certs
+      readOnly: true
+    - name: caddyfile
+      mountPath: /etc/caddy
+  volumes:
+  - name: certs
+    secret:
+      secretName: delivery-node-2-certs
+  - name: caddyfile
+    configMap:
+      name: delivery-node-caddyfile
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: delivery-node-3
+spec:
+  selector:
+    app: delivery-node
+    cache-id: "3"
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: 80
+  - name: https
+    protocol: TCP
+    port: 443
+    targetPort: 443
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: delivery-node-3
+  labels:
+    app: delivery-node
+    cache-id: "3"
+spec:
+  containers:
+  - name: caddy
+    image: pafev/content-steering:delivery-node-latest
+    imagePullPolicy: Always
+    env:
+    - name: LATITUDE
+      value: "-15.0"
+    - name: LONGITUDE
+      value: "-48.0"
+    ports:
+    - containerPort: 80
+    - containerPort: 443
+    volumeMounts:
+    - name: certs
+      mountPath: /root/certs
+      readOnly: true
+    - name: caddyfile
+      mountPath: /etc/caddy
+  volumes:
+  - name: certs
+    secret:
+      secretName: delivery-node-3-certs
+  - name: caddyfile
+    configMap:
+      name: delivery-node-caddyfile
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dash-client
+  labels:
+    app: dash-client
+spec:
+  containers:
+  - name: client
+    image: pafev/content-steering:client-latest
+    imagePullPolicy: Always
+    ports:
+    - containerPort: 80
+    - containerPort: 8001
+    - containerPort: 8002
+    - containerPort: 8003
+    - containerPort: 30500
+    volumeMounts:
+    - name: cert-steering
+      mountPath: /etc/nginx/certs/steering-server.pem
+      subPath: steering-server.pem
+      readOnly: true
+    - name: cert-steering-key
+      mountPath: /etc/nginx/certs/steering-server-key.pem
+      subPath: steering-server-key.pem
+      readOnly: true
+    - name: cert-node1
+      mountPath: /etc/nginx/certs/delivery-node-1.pem
+      subPath: delivery-node.pem
+      readOnly: true
+    - name: cert-node1-key
+      mountPath: /etc/nginx/certs/delivery-node-1-key.pem
+      subPath: delivery-node-key.pem
+      readOnly: true
+    - name: cert-node2
+      mountPath: /etc/nginx/certs/delivery-node-2.pem
+      subPath: delivery-node.pem
+      readOnly: true
+    - name: cert-node2-key
+      mountPath: /etc/nginx/certs/delivery-node-2-key.pem
+      subPath: delivery-node-key.pem
+      readOnly: true
+    - name: cert-node3
+      mountPath: /etc/nginx/certs/delivery-node-3.pem
+      subPath: delivery-node.pem
+      readOnly: true
+    - name: cert-node3-key
+      mountPath: /etc/nginx/certs/delivery-node-3-key.pem
+      subPath: delivery-node-key.pem
+      readOnly: true
+  volumes:
+  - name: cert-steering
+    secret:
+      secretName: steering-server-certs
+  - name: cert-steering-key
+    secret:
+      secretName: steering-server-certs
+  - name: cert-node1
+    secret:
+      secretName: delivery-node-1-certs
+  - name: cert-node1-key
+    secret:
+      secretName: delivery-node-1-certs
+  - name: cert-node2
+    secret:
+      secretName: delivery-node-2-certs
+  - name: cert-node2-key
+    secret:
+      secretName: delivery-node-2-certs
+  - name: cert-node3
+    secret:
+      secretName: delivery-node-3-certs
+  - name: cert-node3-key
+    secret:
+      secretName: delivery-node-3-certs

@@ -1,0 +1,8 @@
+__pycache__/
+**/dataset/
+results/
+logs/
+.venv/
+
+*.pyc
+*.pem
