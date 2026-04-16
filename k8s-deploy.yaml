@@ -240,9 +240,9 @@ spec:
     imagePullPolicy: Always
     env:
     - name: LATITUDE
-      value: "-15.0"
+      value: "5.0"
     - name: LONGITUDE
-      value: "-48.0"
+      value: "-74.0"
     ports:
     - containerPort: 80
     - containerPort: 443
