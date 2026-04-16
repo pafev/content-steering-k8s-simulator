@@ -550,11 +550,6 @@ if __name__ == "__main__":
         help="Suffix for delivery node hostnames (e.g. .default.svc.cluster.local).",
     )
     parser.add_argument(
-        "--gateway_mode",
-        action="store_true",
-        help="Use gateway ports (8001, 8002, 8003) for delivery nodes.",
-    )
-    parser.add_argument(
         "--verbose", "-v", action="store_true", help="Enables DEBUG level logging."
     )
     args = parser.parse_args()
@@ -620,7 +615,7 @@ if __name__ == "__main__":
         active_log_filename,
         args.log_suffix,
         args.host_suffix,
-        args.gateway_mode,
+        gateway_mode=True,
     )
     app_logger.info(f"Starting Flask service (Strategy: {current_strategy_name})...")
     try:

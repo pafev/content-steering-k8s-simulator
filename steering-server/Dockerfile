@@ -17,4 +17,4 @@ RUN mkdir -p /app/logs/raw_data
 
 EXPOSE 30500
 
-CMD ["python", "src/app.py", "--strategy", "ucb1", "--gateway_mode"]
+CMD ["python", "src/app.py", "--strategy", "ucb1"]

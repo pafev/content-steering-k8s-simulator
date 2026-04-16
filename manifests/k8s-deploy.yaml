@@ -148,6 +148,8 @@ spec:
       readOnly: true
     - name: caddyfile
       mountPath: /etc/caddy
+    - name: dataset
+      mountPath: /srv
   volumes:
   - name: certs
     secret:
@@ -155,6 +157,9 @@ spec:
   - name: caddyfile
     configMap:
       name: delivery-node-caddyfile
+  - name: dataset
+    hostPath:
+      path: /mnt/dataset
 ---
 apiVersion: v1
 kind: Service
@@ -200,6 +205,8 @@ spec:
       readOnly: true
     - name: caddyfile
       mountPath: /etc/caddy
+    - name: dataset
+      mountPath: /srv
   volumes:
   - name: certs
     secret:
@@ -207,6 +214,9 @@ spec:
   - name: caddyfile
     configMap:
       name: delivery-node-caddyfile
+  - name: dataset
+    hostPath:
+      path: /mnt/dataset
 ---
 apiVersion: v1
 kind: Service
@@ -252,6 +262,8 @@ spec:
       readOnly: true
     - name: caddyfile
       mountPath: /etc/caddy
+    - name: dataset
+      mountPath: /srv
   volumes:
   - name: certs
     secret:
@@ -259,6 +271,9 @@ spec:
   - name: caddyfile
     configMap:
       name: delivery-node-caddyfile
+  - name: dataset
+    hostPath:
+      path: /mnt/dataset
 ---
 apiVersion: v1
 kind: Service

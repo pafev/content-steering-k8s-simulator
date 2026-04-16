@@ -1,43 +1,46 @@
-# Content Steering (DASH) em cluster Kubernetes
+# Content Steering (DASH) on Kubernetes Cluster
 
-repository inspired by [alissonpef/Content-Steering](https://github.com/alissonpef/Content-Steering)
+This repository contains a Content Steering simulator for DASH running on a Kubernetes cluster (Kind). The simulator allows for real-time testing of different CDN selection strategies.
 
-## How to Run
+Inspired by: [alissonpef/Content-Steering](https://github.com/alissonpef/Content-Steering)
 
-First, set up a Kubernetes cluster for testing, either from a cloud provider (AWS, Azure, Digital Ocean, etc.) or locally (Kind)
+## Architecture
 
-### Certificate Generation
+For details on component architecture and network logic, please refer to the [AGENTS.md](./AGENTS.md) file.
 
-Communication between components occurs via the HTTPS protocol. Therefore, you will need to generate SSL certificates for the content delivery nodes and the steering server.
+## Requirements
 
-To do this, run the script below:
+- **Docker**
+- **Kind** (for local cluster)
+- **kubectl**
+- **mkcert** (for SSL certificate generation)
 
-```bash
-./create_certs.sh
-```
+## How to Run (Automatic Setup)
 
-Next, you will apply these certificates to the cluster:
+The `setup.sh` script automates the entire process of cluster creation, certificate generation, and manifest deployment.
 
-```bash
-kubectl apply -f ./k8s-deploy-certs.yaml
-```
-
-### Installing the components
-
-To install the components on the cluster, simply run the following command from the root of the repository:
+1.  Ensure your dataset is present in `./delivery-nodes/dataset`.
+2.  Run the setup script:
 
 ```bash
-kubectl apply -f ./k8s-deploy.yaml
+./setup.sh
 ```
 
-Wait for the components to stabilize and for all of them to be in the "Running" state
+The script will:
+- Validate the presence of the dataset.
+- Create the Kind cluster (if it doesn't exist) using the `kind-config.yaml` file.
+- Generate local SSL certificates and Kubernetes secrets.
+- Apply the deployment manifests from `k8s-deploy.yaml`.
+- Wait until all Pods are ready.
 
-Then, to interact with and view the client interface locally, set up a port forwarding rule with the gateway
+## Interface Access
+
+After the setup is finished, to view the DASH client interface, you need to configure a port-forward for the gateway component:
 
 ```bash
 kubectl port-forward pod/gateway 5000:80
 ```
 
-E então acesse `http://localhost:5000` para visualizar a interface do cliente.
+Access the simulator at: `http://localhost:5000`
 
-Obs.: o gateway apenas simula a interface do cliente, enviando as requests realizadas no seu browser para o real componente do cliente que está rodando dentro do cluster Kubernetes, pois todo tráfego de content steering ocorre internamente no cluster
+> **Note:** The gateway acts as a reverse proxy for the actual client component inside the cluster, ensuring that all Content Steering traffic remains internal so that latency simulations are accurate.

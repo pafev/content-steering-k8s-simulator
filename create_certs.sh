@@ -49,14 +49,16 @@ echo "=================================================="
 echo "   ALL CERTIFICATES WERE CREATED SUCCESSFULLY!   "
 echo "=================================================="
 
+K8S_CERTS_DIR="./manifests/k8s-certs.yaml"
+
 echo ""
 echo "--> Creating Kubernetes Secrets..."
 echo "--------------------------------------------------"
-echo "---" >k8s-deploy-certs.yaml
-kubectl create secret generic steering-server-certs --from-file=steering-server.pem=./steering-server/certs/steering-server.pem --from-file=steering-server-key.pem=./steering-server/certs/steering-server-key.pem --dry-run=client -o yaml >>k8s-deploy-certs.yaml
-echo "---" >>k8s-deploy-certs.yaml
-kubectl create secret generic delivery-node-1-certs --from-file=delivery-node.pem=./delivery-nodes/certs/delivery-node-1.pem --from-file=delivery-node-key.pem=./delivery-nodes/certs/delivery-node-1-key.pem --dry-run=client -o yaml >>k8s-deploy-certs.yaml
-echo "---" >>k8s-deploy-certs.yaml
-kubectl create secret generic delivery-node-2-certs --from-file=delivery-node.pem=./delivery-nodes/certs/delivery-node-2.pem --from-file=delivery-node-key.pem=./delivery-nodes/certs/delivery-node-2-key.pem --dry-run=client -o yaml >>k8s-deploy-certs.yaml
-echo "---" >>k8s-deploy-certs.yaml
-kubectl create secret generic delivery-node-3-certs --from-file=delivery-node.pem=./delivery-nodes/certs/delivery-node-3.pem --from-file=delivery-node-key.pem=./delivery-nodes/certs/delivery-node-3-key.pem --dry-run=client -o yaml >>k8s-deploy-certs.yaml
+echo "---" >"${K8S_CERTS_DIR}"
+kubectl create secret generic steering-server-certs --from-file=steering-server.pem=./steering-server/certs/steering-server.pem --from-file=steering-server-key.pem=./steering-server/certs/steering-server-key.pem --dry-run=client -o yaml >>"${K8S_CERTS_DIR}"
+echo "---" >>"${K8S_CERTS_DIR}"
+kubectl create secret generic delivery-node-1-certs --from-file=delivery-node.pem=./delivery-nodes/certs/delivery-node-1.pem --from-file=delivery-node-key.pem=./delivery-nodes/certs/delivery-node-1-key.pem --dry-run=client -o yaml >>"${K8S_CERTS_DIR}"
+echo "---" >>"${K8S_CERTS_DIR}"
+kubectl create secret generic delivery-node-2-certs --from-file=delivery-node.pem=./delivery-nodes/certs/delivery-node-2.pem --from-file=delivery-node-key.pem=./delivery-nodes/certs/delivery-node-2-key.pem --dry-run=client -o yaml >>"${K8S_CERTS_DIR}"
+echo "---" >>"${K8S_CERTS_DIR}"
+kubectl create secret generic delivery-node-3-certs --from-file=delivery-node.pem=./delivery-nodes/certs/delivery-node-3.pem --from-file=delivery-node-key.pem=./delivery-nodes/certs/delivery-node-3-key.pem --dry-run=client -o yaml >>"${K8S_CERTS_DIR}"
