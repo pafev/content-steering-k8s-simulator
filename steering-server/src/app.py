@@ -257,51 +257,6 @@ class Main:
                 }
             ), 200
 
-        @self.app.route("/<path:name>", methods=["GET", "POST"])
-        def do_remote_steering(name: str):
-            global last_steering_main_server_decision, last_decision_contexts
-            if not self._initialize_selector_if_needed():
-                return jsonify(
-                    {"error": "Service not ready (selector initialization failed)."}
-                ), 503
-            ordered_nodes = []
-            if isinstance(selector_instance, LinUCBSelector):
-                node_names = [
-                    info[0] for info in monitor.getNodes() if info and info[0]
-                ]
-                contexts_for_decision = {}
-                for node_name in node_names:
-                    context, _ = latency_oracle.get_context_and_final_latency(node_name)
-                    contexts_for_decision[node_name] = context
-                last_decision_contexts = contexts_for_decision
-                ordered_nodes = selector_instance.select_arm(
-                    contexts=contexts_for_decision
-                )
-            else:
-                ordered_nodes = selector_instance.select_arm()
-            last_steering_main_server_decision = (
-                ordered_nodes[0] if ordered_nodes else "N/A_NO_NODES_FROM_SELECTION"
-            )
-            if not ordered_nodes:
-                app_logger.error("No server selected by strategy.")
-                return jsonify({"error": "No selectable server"}), 503
-            if latency_oracle and ordered_nodes:
-                latency_oracle.track_server_selection(ordered_nodes[0])
-            nodes_p = [(n, n) for n in ordered_nodes]
-            uri_scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
-            service_host = request.headers.get("X-Forwarded-Host", request.host)
-            uri = f"{uri_scheme}://{service_host}"
-            target = request.args.get("_DASH_pathway", "", str)
-            resp = dash_parser.build(
-                target=target,
-                nodes=nodes_p,
-                uri=uri,
-                request=request,
-                host_suffix=self.host_suffix,
-                gateway_mode=self.gateway_mode,
-            )
-            return jsonify(resp), 200
-
         @self.app.route("/coords", methods=["POST"])
         def coords_update():
             global last_steering_main_server_decision, last_client_coords
@@ -313,6 +268,11 @@ class Main:
             lon = data.get("long")
             rt_c = data.get("rt")
             srv_u_fb = data.get("server_used")
+
+            # Se o player reportar que está usando um servidor (mesmo o padrão), atualizamos a última decisão
+            if srv_u_fb and srv_u_fb != "cloud":
+                last_steering_main_server_decision = srv_u_fb
+
             client_is_moving = self._update_client_position(lat, lon)
             oracle_lat_fb = self._get_oracle_feedback_latency(srv_u_fb)
             log_base = self._build_log_base(s_t, lat, lon)
@@ -373,6 +333,54 @@ class Main:
                     "strategy": current_strategy_name,
                 }
             ), 200
+
+        @self.app.route("/<path:name>", methods=["GET", "POST"])
+        def do_remote_steering(name: str):
+            global last_steering_main_server_decision, last_decision_contexts
+            app_logger.info(f"Steering Request received for path: {name} | Args: {request.args}")
+            if not self._initialize_selector_if_needed():
+                return jsonify(
+                    {"error": "Service not ready (selector initialization failed)."}
+                ), 503
+            ordered_nodes = []
+            if isinstance(selector_instance, LinUCBSelector):
+                node_names = [
+                    info[0] for info in monitor.getNodes() if info and info[0]
+                ]
+                contexts_for_decision = {}
+                for node_name in node_names:
+                    context, _ = latency_oracle.get_context_and_final_latency(node_name)
+                    contexts_for_decision[node_name] = context
+                last_decision_contexts = contexts_for_decision
+                ordered_nodes = selector_instance.select_arm(
+                    contexts=contexts_for_decision
+                )
+            else:
+                ordered_nodes = selector_instance.select_arm()
+            last_steering_main_server_decision = (
+                ordered_nodes[0] if ordered_nodes else "N/A_NO_NODES_FROM_SELECTION"
+            )
+            if not ordered_nodes:
+                app_logger.error("No server selected by strategy.")
+                return jsonify({"error": "No selectable server"}), 503
+            if latency_oracle and ordered_nodes:
+                latency_oracle.track_server_selection(ordered_nodes[0])
+            nodes_p = [(n, n) for n in ordered_nodes]
+            uri_scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
+            service_host = request.headers.get("X-Forwarded-Host", request.host)
+            service_prefix = request.headers.get("X-Forwarded-Prefix", "")
+            uri = f"{uri_scheme}://{service_host}{service_prefix}"
+            target = request.args.get("_DASH_pathway", "", str)
+            resp = dash_parser.build(
+                target=target,
+                nodes=nodes_p,
+                uri=uri,
+                request=request,
+                host_suffix=self.host_suffix,
+                gateway_mode=self.gateway_mode,
+                request_host=service_host,
+            )
+            return jsonify(resp), 200
 
     def run(self):
         global current_strategy_name
