@@ -176,6 +176,7 @@ class Main:
         self.log_suffix = log_suffix
         self.host_suffix = host_suffix
         self.gateway_mode = gateway_mode
+        self.last_reported_latencies = {}
         self.app = Flask(__name__)
         CORS(self.app)
         werkzeug_logger = logging.getLogger("werkzeug")
@@ -273,6 +274,9 @@ class Main:
             if srv_u_fb and srv_u_fb != "cloud":
                 last_steering_main_server_decision = srv_u_fb
 
+            if srv_u_fb and rt_c is not None:
+                self.last_reported_latencies[srv_u_fb] = rt_c
+
             client_is_moving = self._update_client_position(lat, lon)
             oracle_lat_fb = self._get_oracle_feedback_latency(srv_u_fb)
             log_base = self._build_log_base(s_t, lat, lon)
@@ -323,12 +327,14 @@ class Main:
 
         @self.app.route("/sim_state", methods=["GET"])
         def sim_state():
-            oracle_latencies = (
+            latencies = (
                 latency_oracle.get_all_current_latencies() if latency_oracle else {}
             )
+            for srv, val in self.last_reported_latencies.items():
+                latencies[srv] = val
             return jsonify(
                 {
-                    "latencies": oracle_latencies,
+                    "latencies": latencies,
                     "decision": last_steering_main_server_decision,
                     "strategy": current_strategy_name,
                 }
@@ -337,7 +343,9 @@ class Main:
         @self.app.route("/<path:name>", methods=["GET", "POST"])
         def do_remote_steering(name: str):
             global last_steering_main_server_decision, last_decision_contexts
-            app_logger.info(f"Steering Request received for path: {name} | Args: {request.args}")
+            app_logger.info(
+                f"Steering Request received for path: {name} | Args: {request.args}"
+            )
             if not self._initialize_selector_if_needed():
                 return jsonify(
                     {"error": "Service not ready (selector initialization failed)."}
@@ -466,12 +474,14 @@ class Main:
         }
 
     def _handle_rl_feedback(self, srv_name, oracle_lat, log_base):
+        rt_client = request.json.get("rt")
+        effective_latency = rt_client if rt_client is not None else oracle_lat
         log_entry = {
             **log_base,
             "server_used_for_latency": srv_name,
-            "experienced_latency_ms_CLIENT": request.json.get("rt"),
+            "experienced_latency_ms_CLIENT": rt_client,
             "experienced_latency_ms_ORACLE": oracle_lat,
-            "experienced_latency_ms": oracle_lat,
+            "experienced_latency_ms": effective_latency,
         }
         if active_log_filename:
             log_data_to_csv(log_entry, filename=active_log_filename)
@@ -488,10 +498,12 @@ class Main:
                     f"Server {srv_name} not in selector nodes; feedback logged without RL update."
                 )
                 return "Feedback logged (server not in selector nodes).", 200
-        feedback_value = float(oracle_lat)
+        feedback_value = float(effective_latency)
         if isinstance(selector_instance, (UCB1Selector, LinUCBSelector, EpsilonGreedy)):
             feedback_value = (
-                1000.0 / float(oracle_lat) if float(oracle_lat) > 0 else 0.0
+                1000.0 / float(effective_latency)
+                if float(effective_latency) > 0
+                else 0.0
             )
         update_kwargs = {}
         if isinstance(selector_instance, LinUCBSelector):
