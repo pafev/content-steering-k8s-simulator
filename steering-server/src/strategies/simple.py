@@ -3,8 +3,8 @@ from .base import Selector
 
 
 class NoSteeringSelector(Selector):
-    def __init__(self, monitor=None, latency_oracle=None):
-        super().__init__(monitor=monitor, latency_oracle=latency_oracle)
+    def __init__(self, monitor=None):
+        super().__init__(monitor=monitor)
 
     def select_arm(self, **kwargs) -> list:
         if self.monitor:
@@ -15,8 +15,8 @@ class NoSteeringSelector(Selector):
 
 
 class RandomSelector(Selector):
-    def __init__(self, monitor=None, latency_oracle=None):
-        super().__init__(monitor=monitor, latency_oracle=latency_oracle)
+    def __init__(self, monitor=None):
+        super().__init__(monitor=monitor)
 
     def select_arm(self, **kwargs) -> list:
         if self.monitor:

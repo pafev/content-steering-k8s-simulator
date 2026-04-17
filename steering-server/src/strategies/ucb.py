@@ -4,8 +4,8 @@ from .base import Selector, selector_logger
 
 
 class UCB1Selector(Selector):
-    def __init__(self, c=2.0, monitor=None, latency_oracle=None):
-        super().__init__(monitor=monitor, latency_oracle=latency_oracle)
+    def __init__(self, c=2.0, monitor=None):
+        super().__init__(monitor=monitor)
         self.c = c
         self.counts = {}
         self.values = {}

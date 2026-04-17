@@ -4,9 +4,8 @@ selector_logger = logging.getLogger("SelectorStrategies")
 
 
 class Selector:
-    def __init__(self, monitor=None, latency_oracle=None):
+    def __init__(self, monitor=None):
         self.monitor = monitor
-        self.latency_oracle = latency_oracle
         self.nodes = []
 
     def initialize(self, arms_names: list):

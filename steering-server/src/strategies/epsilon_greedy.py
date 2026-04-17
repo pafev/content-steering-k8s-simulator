@@ -9,9 +9,8 @@ class EpsilonGreedy(Selector):
         counts: dict,
         values: dict,
         monitor=None,
-        latency_oracle=None,
     ):
-        super().__init__(monitor=monitor, latency_oracle=latency_oracle)
+        super().__init__(monitor=monitor)
         self.epsilon = epsilon
         self.counts = counts if isinstance(counts, dict) else {}
         self.values = values if isinstance(values, dict) else {}

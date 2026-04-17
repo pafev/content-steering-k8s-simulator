@@ -11,9 +11,8 @@ class LinUCBSelector(Selector):
         alpha: float,
         gamma: float = 1.0,
         monitor=None,
-        latency_oracle=None,
     ):
-        super().__init__(monitor=monitor, latency_oracle=latency_oracle)
+        super().__init__(monitor=monitor)
         self.d_env = d
         self.alpha = alpha
         self.n_arms: int = 0

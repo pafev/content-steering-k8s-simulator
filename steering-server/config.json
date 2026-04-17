@@ -7,9 +7,9 @@
       "c": 1.0
     },
     "linucb": {
-      "d": 14,
+      "d": 3,
       "alpha": 0.5,
-      "comment": "LinUCB with arm-indicator features (Li et al. 2010). d=14 env context dim; internally d_total = n_arms + d. No decay."
+      "comment": "Simple context: [1.0, time_of_day, last_latency_normalized]"
     }
   },
   "simulation": {

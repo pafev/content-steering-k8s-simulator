@@ -13,16 +13,15 @@ from strategies import (
     RandomSelector,
     NoSteeringSelector,
     UCB1Selector,
-    OracleBestChoiceSelector,
     LinUCBSelector,
 )
-from dynamic_latency_oracle import DynamicLatencyOracle, calculate_haversine_distance
 
 CONFIG_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "config.json"
 )
 with open(CONFIG_PATH, "r") as f:
     CONFIG = json.load(f)
+
 STEERING_PORT = 30500
 PROJECT_ROOT_DIR = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -35,10 +34,7 @@ CSV_HEADERS = [
     "client_lon",
     "server_used_for_latency",
     "experienced_latency_ms_CLIENT",
-    "experienced_latency_ms_ORACLE",
     "experienced_latency_ms",
-    "dynamic_best_server_latency",
-    "all_servers_oracle_latency_json",
     "steering_decision_main_server",
     "rl_strategy",
     "rl_counts_json",
@@ -46,70 +42,43 @@ CSV_HEADERS = [
     "rl_values_json",
     "gamma_value",
 ]
+
 selector_instance = None
 selector_initialized = False
 last_steering_main_server_decision = "N/A"
 current_strategy_name = "N/A"
-latency_oracle = None
 active_log_filename = None
 last_client_coords = {"lat": None, "lon": None, "time": 0}
-MOVEMENT_THRESHOLD_KM = CONFIG.get("simulation", {}).get("movement_threshold_km", 0.05)
-CLIENT_COORDS_UPDATE_INTERVAL_SEC = CONFIG.get("simulation", {}).get(
-    "client_coords_update_interval_sec", 0.9
-)
 last_decision_contexts = {}
+
 app_logger = logging.getLogger("SteeringApp")
-oracle_logger = logging.getLogger("LatencyOracle")
 monitor_logger = logging.getLogger("ContainerMonitor")
 selector_strategies_logger = logging.getLogger("SelectorStrategies")
 
 
 def _configure_all_loggers(default_level=logging.WARNING):
-    loggers_to_configure = [
-        app_logger,
-        oracle_logger,
-        monitor_logger,
-        selector_strategies_logger,
-    ]
+    loggers = [app_logger, monitor_logger, selector_strategies_logger]
     formatter = logging.Formatter("%(name)s - %(levelname)s: %(message)s")
-    for logger_instance in loggers_to_configure:
-        if not logger_instance.handlers:
+    for logger in loggers:
+        if not logger.handlers:
             handler = logging.StreamHandler()
             handler.setFormatter(formatter)
-            logger_instance.addHandler(handler)
-        else:
-            logger_instance.handlers[0].setFormatter(formatter)
-        logger_instance.setLevel(default_level)
-        logger_instance.propagate = False
+            logger.addHandler(handler)
+        logger.setLevel(default_level)
+        logger.propagate = False
 
 
-def _create_strategy_instance(strategy_name: str, monitor_ref, oracle_ref):
+def _create_strategy_instance(strategy_name: str, monitor_ref):
     cfg = CONFIG.get("strategies", {}).get(strategy_name, {})
     constructors = {
         "epsilon_greedy": lambda: EpsilonGreedy(
-            epsilon=cfg.get("epsilon", 0.2),
-            counts={},
-            values={},
-            monitor=monitor_ref,
-            latency_oracle=oracle_ref,
+            epsilon=cfg.get("epsilon", 0.2), counts={}, values={}, monitor=monitor_ref
         ),
-        "no_steering": lambda: NoSteeringSelector(
-            monitor=monitor_ref, latency_oracle=oracle_ref
-        ),
-        "random": lambda: RandomSelector(
-            monitor=monitor_ref, latency_oracle=oracle_ref
-        ),
-        "ucb1": lambda: UCB1Selector(
-            c=cfg.get("c", 1.0), monitor=monitor_ref, latency_oracle=oracle_ref
-        ),
+        "no_steering": lambda: NoSteeringSelector(monitor=monitor_ref),
+        "random": lambda: RandomSelector(monitor=monitor_ref),
+        "ucb1": lambda: UCB1Selector(c=cfg.get("c", 1.0), monitor=monitor_ref),
         "linucb": lambda: LinUCBSelector(
-            d=cfg.get("d", 14),
-            alpha=cfg.get("alpha", 0.5),
-            monitor=monitor_ref,
-            latency_oracle=oracle_ref,
-        ),
-        "oracle_best_choice": lambda: OracleBestChoiceSelector(
-            monitor=monitor_ref, latency_oracle=oracle_ref
+            d=cfg.get("d", 3), alpha=cfg.get("alpha", 0.5), monitor=monitor_ref
         ),
     }
     builder = constructors.get(strategy_name)
@@ -119,71 +88,42 @@ def _create_strategy_instance(strategy_name: str, monitor_ref, oracle_ref):
 
 
 def setup_csv_logging(filename: str):
-    try:
-        os.makedirs(os.path.dirname(filename), exist_ok=True)
-        with open(filename, mode="w", newline="", buffering=1) as file:
-            writer = csv.writer(file)
-            writer.writerow(CSV_HEADERS)
-            file.flush()
-            os.fsync(file.fileno())
-        app_logger.info(f"CSV log configured: {filename}")
-    except Exception as e:
-        app_logger.critical(
-            f"Error setting up CSV log for {filename}: {e}", exc_info=True
-        )
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    with open(filename, mode="w", newline="", buffering=1) as file:
+        csv.writer(file).writerow(CSV_HEADERS)
 
 
 def log_data_to_csv(data_dict: dict, filename: str):
     row = [data_dict.get(h) for h in CSV_HEADERS]
-    try:
-        with open(filename, mode="a", newline="", buffering=1) as file:
-            csv.writer(file).writerow(row)
-            file.flush()
-            os.fsync(file.fileno())
-    except Exception as e:
-        app_logger.error(f"Error writing to CSV {filename}: {e}", exc_info=True)
+    with open(filename, mode="a", newline="", buffering=1) as file:
+        csv.writer(file).writerow(row)
 
 
 def get_unique_log_filename(
     base_name: str, user_suffix: str, directory: str = LOG_DIR
 ) -> str:
-    full_base_with_suffix = f"{base_name}{user_suffix}"
     cnt = 1
     while True:
-        numbered_filename = f"{full_base_with_suffix}_{cnt}.csv"
-        numbered_path = os.path.join(directory, numbered_filename)
-        if not os.path.exists(numbered_path):
-            return numbered_path
+        path = os.path.join(directory, f"{base_name}{user_suffix}_{cnt}.csv")
+        if not os.path.exists(path):
+            return path
         cnt += 1
 
 
 class Main:
     def __init__(
-        self,
-        sel_inst,
-        strategy_arg: str,
-        log_file: str,
-        log_suffix: str,
-        host_suffix: str = ".default.svc.cluster.local",
-        gateway_mode: bool = False,
+        self, sel_inst, strategy_arg, log_suffix, host_suffix, gateway_mode=True
     ):
-        global selector_instance, current_strategy_name, active_log_filename
-        selector_instance, current_strategy_name, active_log_filename = (
-            sel_inst,
-            strategy_arg,
-            log_file,
+        global selector_instance, current_strategy_name
+        selector_instance, current_strategy_name = sel_inst, strategy_arg
+        self.log_suffix, self.host_suffix, self.gateway_mode = (
+            log_suffix,
+            host_suffix,
+            gateway_mode,
         )
-        self.log_suffix = log_suffix
-        self.host_suffix = host_suffix
-        self.gateway_mode = gateway_mode
         self.last_reported_latencies = {}
         self.app = Flask(__name__)
         CORS(self.app)
-        werkzeug_logger = logging.getLogger("werkzeug")
-        if app_logger.getEffectiveLevel() > logging.INFO:
-            werkzeug_logger.setLevel(logging.ERROR)
-        else:
-            werkzeug_logger.setLevel(logging.INFO)
         self._register_routes()
 
     def _initialize_selector_if_needed(self) -> bool:
@@ -192,68 +132,44 @@ class Main:
             nodes_info = monitor.getNodes()
             if nodes_info:
                 node_names = [info[0] for info in nodes_info if info and info[0]]
-                if node_names:
-                    selector_instance.initialize(node_names)
-                    selector_initialized = True
-                    app_logger.debug(
-                        f"Selector initialized/updated with nodes: {node_names}"
-                    )
-                    return True
-                else:
-                    app_logger.warning(
-                        "No node names from monitor to initialize selector."
-                    )
-            else:
-                app_logger.warning("No node info from monitor to initialize selector.")
+                selector_instance.initialize(node_names)
+                selector_initialized = True
+                return True
             return False
         return True
+
+    def _get_simple_context(self, srv_name: str):
+        import numpy as np
+
+        t = time.localtime()
+        time_of_day = (t.tm_hour + t.tm_min / 60.0) / 24.0
+        last_lat = self.last_reported_latencies.get(srv_name, 50.0)
+        norm_lat = min(1.0, float(last_lat) / 2000.0)
+        return np.array([1.0, time_of_day, norm_lat])
 
     def _register_routes(self):
         @self.app.route("/reset_simulation", methods=["POST"])
         def reset_simulation():
             global selector_instance, active_log_filename, selector_initialized
-            app_logger.info(
-                f"Resetting simulation... Old Selector ID: {id(selector_instance)}"
-            )
-
+            self.last_reported_latencies = {}
             data = request.get_json(silent=True) or {}
-            requested_subdir = data.get("log_subdir")
-            requested_filename = data.get("log_filename")
-
             target_dir = LOG_DIR
-            if requested_subdir:
-                subdir = str(requested_subdir).strip().replace("\\", "/")
-                subdir = os.path.normpath(subdir)
-                if not os.path.isabs(subdir) and not subdir.startswith(".."):
-                    target_dir = os.path.join(LOG_DIR, subdir)
-                else:
-                    app_logger.warning(
-                        f"Invalid log_subdir ignored: {requested_subdir}"
-                    )
-
-            if requested_filename:
-                safe_filename = os.path.basename(str(requested_filename).strip())
-                if not safe_filename.endswith(".csv"):
-                    safe_filename += ".csv"
-                active_log_filename = os.path.join(target_dir, safe_filename)
-            else:
-                active_log_filename = get_unique_log_filename(
-                    f"log_{current_strategy_name}",
-                    self.log_suffix,
-                    directory=target_dir,
+            if data.get("log_subdir"):
+                target_dir = os.path.join(
+                    LOG_DIR, os.path.normpath(data.get("log_subdir"))
                 )
 
-            setup_csv_logging(filename=active_log_filename)
-            if latency_oracle and hasattr(latency_oracle, "reset_events"):
-                latency_oracle.reset_events()
+            active_log_filename = get_unique_log_filename(
+                f"log_{current_strategy_name}", self.log_suffix, target_dir
+            )
+            setup_csv_logging(active_log_filename)
             selector_instance = _create_strategy_instance(
-                current_strategy_name, monitor, latency_oracle
+                current_strategy_name, monitor
             )
             selector_initialized = False
-            app_logger.info(f"Simulation reset. New log: {active_log_filename}")
             return jsonify(
                 {
-                    "message": "Simulation reset",
+                    "message": "Reset OK",
                     "new_log": os.path.basename(active_log_filename),
                 }
             ), 200
@@ -261,80 +177,30 @@ class Main:
         @self.app.route("/coords", methods=["POST"])
         def coords_update():
             global last_steering_main_server_decision, last_client_coords
-            if not request.json:
-                return "Invalid request: Missing JSON body", 400
             data = request.json
-            s_t = data.get("time")
-            lat = data.get("lat")
-            lon = data.get("long")
-            rt_c = data.get("rt")
-            srv_u_fb = data.get("server_used")
-
-            # Se o player reportar que está usando um servidor (mesmo o padrão), atualizamos a última decisão
+            s_t, lat, lon, rt_c, srv_u_fb = (
+                data.get("time"),
+                data.get("lat"),
+                data.get("long"),
+                data.get("rt"),
+                data.get("server_used"),
+            )
             if srv_u_fb and srv_u_fb != "cloud":
                 last_steering_main_server_decision = srv_u_fb
-
             if srv_u_fb and rt_c is not None:
                 self.last_reported_latencies[srv_u_fb] = rt_c
+            last_client_coords.update({"lat": lat, "lon": lon, "time": time.time()})
 
-            client_is_moving = self._update_client_position(lat, lon)
-            oracle_lat_fb = self._get_oracle_feedback_latency(srv_u_fb)
             log_base = self._build_log_base(s_t, lat, lon)
-            if (
-                srv_u_fb
-                and rt_c is not None
-                and latency_oracle
-                and oracle_lat_fb is not None
-            ):
-                return self._handle_rl_feedback(srv_u_fb, oracle_lat_fb, log_base)
-            elif lat is not None and lon is not None:
-                return self._handle_location_only(srv_u_fb, rt_c, log_base)
-            else:
-                app_logger.warning(
-                    f"Invalid /coords data: srv={srv_u_fb}, rt={rt_c}, lat={lat}"
-                )
-                return "Invalid data: Location or critical info missing", 400
-
-        @self.app.route("/latency_event", methods=["POST"])
-        def latency_event_route():
-            global latency_oracle
-            if not request.json:
-                return "Invalid request: Missing JSON body", 400
-            data = request.json
-            default_event_factor = DynamicLatencyOracle.DEFAULT_EVENT_FACTOR
-            server, factor, duration = (
-                data.get("server_name"),
-                data.get("factor", default_event_factor),
-                data.get("duration_seconds", 10),
-            )
-            app_logger.info(
-                f"Latency Event Received: Server={server}, Factor={factor}, Duration={duration}s"
-            )
-            if not server:
-                return "Server name (server_name) missing", 400
-            if not latency_oracle:
-                return "Latency oracle not ready", 503
-            try:
-                latency_oracle.apply_event_modifier(
-                    server, float(factor), int(duration)
-                )
-                return f"Latency event for {server} applied", 200
-            except ValueError:
-                return "Invalid format for factor or duration", 400
-            except Exception as e:
-                app_logger.error(f"Error in /latency_event: {e}", exc_info=True)
-                return "Error applying event", 500
+            if srv_u_fb and rt_c is not None:
+                return self._handle_rl_feedback(srv_u_fb, rt_c, log_base)
+            return self._handle_location_only(srv_u_fb, rt_c, log_base)
 
         @self.app.route("/sim_state", methods=["GET"])
         def sim_state():
-            latencies = (
-                latency_oracle.get_all_current_latencies() if latency_oracle else {}
-            )
-            for srv, val in self.last_reported_latencies.items():
-                latencies[srv] = val
             return jsonify(
                 {
-                    "latencies": latencies,
+                    "latencies": self.last_reported_latencies,
                     "decision": last_steering_main_server_decision,
                     "strategy": current_strategy_name,
                 }
@@ -343,313 +209,110 @@ class Main:
         @self.app.route("/<path:name>", methods=["GET", "POST"])
         def do_remote_steering(name: str):
             global last_steering_main_server_decision, last_decision_contexts
-            app_logger.info(
-                f"Steering Request received for path: {name} | Args: {request.args}"
-            )
             if not self._initialize_selector_if_needed():
-                return jsonify(
-                    {"error": "Service not ready (selector initialization failed)."}
-                ), 503
-            ordered_nodes = []
+                return jsonify({"error": "Not ready"}), 503
+
             if isinstance(selector_instance, LinUCBSelector):
                 node_names = [
                     info[0] for info in monitor.getNodes() if info and info[0]
                 ]
-                contexts_for_decision = {}
-                for node_name in node_names:
-                    context, _ = latency_oracle.get_context_and_final_latency(node_name)
-                    contexts_for_decision[node_name] = context
-                last_decision_contexts = contexts_for_decision
-                ordered_nodes = selector_instance.select_arm(
-                    contexts=contexts_for_decision
-                )
+                contexts = {n: self._get_simple_context(n) for n in node_names}
+                last_decision_contexts = contexts
+                ordered_nodes = selector_instance.select_arm(contexts=contexts)
             else:
                 ordered_nodes = selector_instance.select_arm()
+
             last_steering_main_server_decision = (
-                ordered_nodes[0] if ordered_nodes else "N/A_NO_NODES_FROM_SELECTION"
+                ordered_nodes[0] if ordered_nodes else "N/A"
             )
-            if not ordered_nodes:
-                app_logger.error("No server selected by strategy.")
-                return jsonify({"error": "No selectable server"}), 503
-            if latency_oracle and ordered_nodes:
-                latency_oracle.track_server_selection(ordered_nodes[0])
-            nodes_p = [(n, n) for n in ordered_nodes]
-            uri_scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
-            service_host = request.headers.get("X-Forwarded-Host", request.host)
-            service_prefix = request.headers.get("X-Forwarded-Prefix", "")
-            uri = f"{uri_scheme}://{service_host}{service_prefix}"
-            target = request.args.get("_DASH_pathway", "", str)
+            uri = f"{request.headers.get('X-Forwarded-Proto', request.scheme)}://{request.headers.get('X-Forwarded-Host', request.host)}{request.headers.get('X-Forwarded-Prefix', '')}"
             resp = dash_parser.build(
-                target=target,
-                nodes=nodes_p,
+                target=request.args.get("_DASH_pathway", ""),
+                nodes=[(n, n) for n in ordered_nodes],
                 uri=uri,
                 request=request,
                 host_suffix=self.host_suffix,
                 gateway_mode=self.gateway_mode,
-                request_host=service_host,
+                request_host=request.headers.get("X-Forwarded-Host", request.host),
             )
             return jsonify(resp), 200
 
     def run(self):
-        global current_strategy_name
         s_dir = os.path.dirname(os.path.abspath(__file__))
-        certs_dir = os.path.join(s_dir, "..", "certs")
         cert, key = (
-            os.path.join(certs_dir, "steering-server.pem"),
-            os.path.join(certs_dir, "steering-server-key.pem"),
+            os.path.join(s_dir, "..", "certs", "steering-server.pem"),
+            os.path.join(s_dir, "..", "certs", "steering-server-key.pem"),
         )
-        try:
-            if not (os.path.exists(cert) and os.path.exists(key)):
-                raise FileNotFoundError("SSL certificate/key not found.")
-            app_logger.info(
-                f"Attempting to start HTTPS service (Strategy: {current_strategy_name}) on port {STEERING_PORT}..."
-            )
-            self.app.run(
-                host="0.0.0.0", port=STEERING_PORT, debug=False, ssl_context=(cert, key)
-            )
-        except Exception as e:
-            app_logger.warning(f"Failed to start SSL: {e}. Falling back to HTTP.")
-            app_logger.info(
-                f"Starting HTTP service (Strategy: {current_strategy_name}) on port {STEERING_PORT}..."
-            )
-            self.app.run(host="0.0.0.0", port=STEERING_PORT, debug=False)
-
-    @staticmethod
-    def _update_client_position(lat, lon) -> bool:
-        global last_client_coords
-        client_is_moving = False
-        now = time.time()
-        if lat is None or lon is None:
-            return False
-        if latency_oracle:
-            latency_oracle.update_client_location(lat, lon)
-        if (
-            last_client_coords["lat"] is not None
-            and last_client_coords["lon"] is not None
-        ):
-            if now - last_client_coords["time"] >= CLIENT_COORDS_UPDATE_INTERVAL_SEC:
-                dist = calculate_haversine_distance(
-                    last_client_coords["lat"], last_client_coords["lon"], lat, lon
-                )
-                if dist > MOVEMENT_THRESHOLD_KM:
-                    client_is_moving = True
-                    app_logger.debug(f"Movement detected: {dist:.3f} km")
-                last_client_coords["lat"] = lat
-                last_client_coords["lon"] = lon
-                last_client_coords["time"] = now
-        elif last_client_coords["lat"] is None:
-            last_client_coords["lat"] = lat
-            last_client_coords["lon"] = lon
-            last_client_coords["time"] = now
-        return client_is_moving
-
-    @staticmethod
-    def _get_oracle_feedback_latency(srv_name):
-        if not srv_name or not latency_oracle:
-            return None
-        all_lats = latency_oracle.get_all_current_latencies()
-        return all_lats.get(srv_name)
-
-    @staticmethod
-    def _build_log_base(s_t, lat, lon):
-        all_oracle_lats = (
-            latency_oracle.get_all_current_latencies() if latency_oracle else {}
+        self.app.run(
+            host="0.0.0.0",
+            port=STEERING_PORT,
+            debug=False,
+            ssl_context=(cert, key) if os.path.exists(cert) else None,
         )
-        best_latency = min(all_oracle_lats.values()) if all_oracle_lats else None
-        counts = getattr(selector_instance, "counts", {})
-        actual = getattr(selector_instance, "real_counts", counts)
+
+    def _build_log_base(self, s_t, lat, lon):
         return {
             "timestamp_server": time.time(),
             "sim_time_client": s_t,
             "client_lat": lat,
             "client_lon": lon,
-            "dynamic_best_server_latency": best_latency,
-            "all_servers_oracle_latency_json": json.dumps(all_oracle_lats),
             "steering_decision_main_server": last_steering_main_server_decision,
             "rl_strategy": current_strategy_name,
-            "rl_counts_json": json.dumps(counts),
-            "rl_actual_counts_json": json.dumps(actual),
+            "rl_counts_json": json.dumps(getattr(selector_instance, "counts", {})),
+            "rl_actual_counts_json": json.dumps(
+                getattr(selector_instance, "real_counts", {})
+            ),
             "rl_values_json": json.dumps(getattr(selector_instance, "values", {})),
             "gamma_value": None,
         }
 
-    def _handle_rl_feedback(self, srv_name, oracle_lat, log_base):
-        rt_client = request.json.get("rt")
-        effective_latency = rt_client if rt_client is not None else oracle_lat
+    def _handle_rl_feedback(self, srv_name, rt_real, log_base):
         log_entry = {
             **log_base,
             "server_used_for_latency": srv_name,
-            "experienced_latency_ms_CLIENT": rt_client,
-            "experienced_latency_ms_ORACLE": oracle_lat,
-            "experienced_latency_ms": effective_latency,
+            "experienced_latency_ms_CLIENT": rt_real,
+            "experienced_latency_ms": rt_real,
         }
         if active_log_filename:
             log_data_to_csv(log_entry, filename=active_log_filename)
-        else:
-            app_logger.warning("No active log file. Call /reset_simulation first.")
-        if not self._initialize_selector_if_needed():
-            return "Service not ready (selector in /coords)", 503
-        if not hasattr(selector_instance, "update"):
-            return "Data logged (no RL update)", 200
-        if srv_name not in selector_instance.nodes:
-            self._initialize_selector_if_needed()
-            if srv_name not in selector_instance.nodes:
-                app_logger.info(
-                    f"Server {srv_name} not in selector nodes; feedback logged without RL update."
-                )
-                return "Feedback logged (server not in selector nodes).", 200
-        feedback_value = float(effective_latency)
-        if isinstance(selector_instance, (UCB1Selector, LinUCBSelector, EpsilonGreedy)):
-            feedback_value = (
-                1000.0 / float(effective_latency)
-                if float(effective_latency) > 0
-                else 0.0
-            )
-        update_kwargs = {}
-        if isinstance(selector_instance, LinUCBSelector):
-            ctx = last_decision_contexts.get(srv_name)
-            if ctx is not None:
-                update_kwargs["context"] = ctx
-            else:
-                app_logger.warning(
-                    f"Context snapshot missing for {srv_name}; LinUCB update may be imprecise."
-                )
-        selector_instance.update(srv_name, feedback_value, **update_kwargs)
-        return "RL updated and logged", 200
+        if not self._initialize_selector_if_needed() or not hasattr(
+            selector_instance, "update"
+        ):
+            return "OK", 200
+        reward = 1000.0 / float(rt_real) if float(rt_real) > 0 else 0.0
+        kw = (
+            {"context": self._get_simple_context(srv_name)}
+            if isinstance(selector_instance, LinUCBSelector)
+            else {}
+        )
+        selector_instance.update(srv_name, reward, **kw)
+        return "OK", 200
 
-    @staticmethod
-    def _handle_location_only(srv_name, rt_c, log_base):
+    def _handle_location_only(self, srv_name, rt_c, log_base):
         if active_log_filename:
             log_entry = {
                 **log_base,
                 "server_used_for_latency": srv_name,
                 "experienced_latency_ms_CLIENT": rt_c,
-                "experienced_latency_ms_ORACLE": None,
-                "experienced_latency_ms": None,
+                "experienced_latency_ms": rt_c,
             }
             log_data_to_csv(log_entry, filename=active_log_filename)
-        return "Location data logged", 200
+        return "OK", 200
 
 
 dash_parser = DashParser()
 monitor = KubernetesMonitor()
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Content Steering Service with RL.")
-    parser.add_argument(
-        "--strategy",
-        type=str,
-        default="epsilon_greedy",
-        choices=[
-            "epsilon_greedy",
-            "no_steering",
-            "random",
-            "ucb1",
-            "oracle_best_choice",
-            "linucb",
-        ],
-        help="Steering strategy.",
-    )
-    parser.add_argument(
-        "--log_suffix",
-        type=str,
-        default="",
-        help="Optional suffix for CSV log filename (e.g., _testScenarioX).",
-    )
-    parser.add_argument(
-        "--host_suffix",
-        type=str,
-        default=".default.svc.cluster.local",
-        help="Suffix for delivery node hostnames (e.g. .default.svc.cluster.local).",
-    )
-    parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enables DEBUG level logging."
-    )
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--strategy", type=str, default="epsilon_greedy")
+    parser.add_argument("--log_suffix", type=str, default="")
+    parser.add_argument("--host_suffix", type=str, default=".default.svc.cluster.local")
     args = parser.parse_args()
-    log_level_to_set = logging.DEBUG if args.verbose else logging.WARNING
-    _configure_all_loggers(default_level=log_level_to_set)
-    app_logger.info(
-        f"Logging level set to {logging.getLevelName(app_logger.getEffectiveLevel())}."
-    )
+    _configure_all_loggers(logging.INFO)
     current_strategy_name = args.strategy
-    app_logger.info(f"Selected strategy: {current_strategy_name}")
-    active_log_filename = None
-    app_logger.info(
-        "Log file will be created when simulation starts (via /reset_simulation)."
-    )
-    app_logger.info("Starting container monitor...")
-    monitor_config = CONFIG.get("monitor", {})
     monitor.start_collecting()
-    app_logger.info("Initializing latency oracle...")
-    oracle_config = CONFIG.get("oracle", {})
-    oracle_interval = oracle_config.get("update_interval_seconds", 1)
-    latency_oracle = DynamicLatencyOracle(
-        monitor,
-        update_interval_seconds=oracle_interval,
-        enable_time_of_day_effects=oracle_config.get(
-            "enable_time_of_day_effects", False
-        ),
-        enable_micro_bursts=oracle_config.get("enable_micro_bursts", False),
-        enable_route_flapping=oracle_config.get("enable_route_flapping", False),
-        enable_retransmission_penalty=oracle_config.get(
-            "enable_retransmission_penalty", False
-        ),
-        enable_queue_delay=oracle_config.get("enable_queue_delay", False),
-        enable_backbone_congestion=oracle_config.get(
-            "enable_backbone_congestion", False
-        ),
-    )
-    latency_oracle.movement_smoothing_factor = oracle_config.get(
-        "movement_smoothing_factor", 0.3
-    )
-    app_logger.info(
-        "Oracle configured: "
-        f"smoothing_factor={latency_oracle.movement_smoothing_factor}, "
-        f"time_of_day={latency_oracle.enable_time_of_day_effects}, "
-        f"micro_bursts={latency_oracle.enable_micro_bursts}, "
-        f"route_flapping={latency_oracle.enable_route_flapping}, "
-        f"retransmission_penalty={latency_oracle.enable_retransmission_penalty}, "
-        f"queue_delay={latency_oracle.enable_queue_delay}, "
-        f"backbone_congestion={latency_oracle.enable_backbone_congestion}"
-    )
-    latency_oracle.start()
-    app_logger.info("Briefly waiting for monitor and oracle to gather initial data...")
-    time.sleep(
-        max(monitor.interval if hasattr(monitor, "interval") else 2, oracle_interval)
-        + 1.0
-    )
-    selector_instance = _create_strategy_instance(
-        args.strategy, monitor, latency_oracle
-    )
-    app_logger.info("Creating Flask application instance...")
-    main_app = Main(
-        selector_instance,
-        current_strategy_name,
-        active_log_filename,
-        args.log_suffix,
-        args.host_suffix,
-        gateway_mode=True,
-    )
-    app_logger.info(f"Starting Flask service (Strategy: {current_strategy_name})...")
-    try:
-        main_app.run()
-    except KeyboardInterrupt:
-        app_logger.info("Service shutting down (Ctrl+C).")
-    except Exception as e:
-        app_logger.critical(f"Runtime error in main application: {e}", exc_info=True)
-    finally:
-        app_logger.info("Shutdown procedures...")
-        if (
-            latency_oracle
-            and hasattr(latency_oracle, "stop")
-            and callable(latency_oracle.stop)
-        ):
-            app_logger.info("Stopping latency oracle...")
-            latency_oracle.stop()
-        if (
-            monitor
-            and hasattr(monitor, "stop_collecting")
-            and callable(monitor.stop_collecting)
-        ):
-            app_logger.info("Stopping container monitor...")
-            monitor.stop_collecting()
-        app_logger.info(f"Service ({current_strategy_name}) stopped.")
+    time.sleep(2)
+    selector_instance = _create_strategy_instance(args.strategy, monitor)
+    Main(
+        selector_instance, current_strategy_name, args.log_suffix, args.host_suffix
+    ).run()
