@@ -235,7 +235,9 @@ class Main:
                 gateway_mode=self.gateway_mode,
                 request_host=request.headers.get("X-Forwarded-Host", request.host),
             )
-            return jsonify(resp), 200
+            response = jsonify(resp)
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            return response, 200
 
     def run(self):
         s_dir = os.path.dirname(os.path.abspath(__file__))
