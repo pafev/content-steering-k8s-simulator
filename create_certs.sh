@@ -3,10 +3,9 @@
 set -e
 
 SERVICES=(
-  "delivery-node-1"
-  "delivery-node-2"
-  "delivery-node-3"
-  "steering-server"
+  "cdn-1"
+  "cdn-2"
+  "cdn-3"
 )
 
 echo "=================================================="
@@ -18,10 +17,8 @@ echo ""
 for SERVICE_NAME in "${SERVICES[@]}"; do
   DEST_DIR=""
 
-  if [[ "$SERVICE_NAME" == "steering-server" ]]; then
-    DEST_DIR="./steering-server/certs"
-  elif [[ "$SERVICE_NAME" == "delivery-node-"* ]]; then
-    DEST_DIR="./delivery-nodes/certs"
+  if [[ "$SERVICE_NAME" == "cdn-"* ]]; then
+    DEST_DIR="./cdn/certs"
   else
     echo "WARNING: Unknown service name: '$SERVICE_NAME'. Skipping."
     continue
@@ -55,10 +52,8 @@ echo ""
 echo "--> Creating Kubernetes Secrets..."
 echo "--------------------------------------------------"
 echo "---" >"${K8S_CERTS_DIR}"
-kubectl create secret generic steering-server-certs --from-file=steering-server.pem=./steering-server/certs/steering-server.pem --from-file=steering-server-key.pem=./steering-server/certs/steering-server-key.pem --dry-run=client -o yaml >>"${K8S_CERTS_DIR}"
+kubectl create secret generic cdn-1-certs --from-file=cdn.pem=./cdn/certs/cdn-1.pem --from-file=cdn-key.pem=./cdn/certs/cdn-1-key.pem --dry-run=client -o yaml >>"${K8S_CERTS_DIR}"
 echo "---" >>"${K8S_CERTS_DIR}"
-kubectl create secret generic delivery-node-1-certs --from-file=delivery-node.pem=./delivery-nodes/certs/delivery-node-1.pem --from-file=delivery-node-key.pem=./delivery-nodes/certs/delivery-node-1-key.pem --dry-run=client -o yaml >>"${K8S_CERTS_DIR}"
+kubectl create secret generic cdn-2-certs --from-file=cdn.pem=./cdn/certs/cdn-2.pem --from-file=cdn-key.pem=./cdn/certs/cdn-2-key.pem --dry-run=client -o yaml >>"${K8S_CERTS_DIR}"
 echo "---" >>"${K8S_CERTS_DIR}"
-kubectl create secret generic delivery-node-2-certs --from-file=delivery-node.pem=./delivery-nodes/certs/delivery-node-2.pem --from-file=delivery-node-key.pem=./delivery-nodes/certs/delivery-node-2-key.pem --dry-run=client -o yaml >>"${K8S_CERTS_DIR}"
-echo "---" >>"${K8S_CERTS_DIR}"
-kubectl create secret generic delivery-node-3-certs --from-file=delivery-node.pem=./delivery-nodes/certs/delivery-node-3.pem --from-file=delivery-node-key.pem=./delivery-nodes/certs/delivery-node-3-key.pem --dry-run=client -o yaml >>"${K8S_CERTS_DIR}"
+kubectl create secret generic cdn-3-certs --from-file=cdn.pem=./cdn/certs/cdn-3.pem --from-file=cdn-key.pem=./cdn/certs/cdn-3-key.pem --dry-run=client -o yaml >>"${K8S_CERTS_DIR}"
