@@ -1,0 +1,76 @@
+# Isolated smoke test of the same images/configs used in Kind.
+# TEST_CERT_DIR must contain cdn.pem and cdn-key.pem (self-signed is sufficient).
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 30
+  telemetry:
+    build: ../telemetry-service
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      default:
+        aliases: [telemetry-service.default.svc.cluster.local]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:30600/healthz')"]
+      interval: 2s
+      retries: 30
+  steering:
+    build: ../steering-server
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      default:
+        aliases: [steering-server.default.svc.cluster.local]
+  origin:
+    build: ../origin
+    volumes:
+      - ../bucket:/srv:ro
+    networks:
+      default:
+        aliases: [origin-server.default.svc.cluster.local]
+  cdn1: &cdn
+    build: ../cdn
+    environment:
+      PATHWAY_ID: cdn-1
+    volumes:
+      - ${TEST_CERT_DIR:?Set TEST_CERT_DIR}:/etc/nginx/certs:ro
+    depends_on:
+      telemetry:
+        condition: service_healthy
+      origin:
+        condition: service_started
+    networks:
+      default:
+        aliases: [cdn-1.default.svc.cluster.local]
+  cdn2:
+    <<: *cdn
+    environment:
+      PATHWAY_ID: cdn-2
+    networks:
+      default:
+        aliases: [cdn-2.default.svc.cluster.local]
+  cdn3:
+    <<: *cdn
+    environment:
+      PATHWAY_ID: cdn-3
+    networks:
+      default:
+        aliases: [cdn-3.default.svc.cluster.local]
+  client:
+    build: ../client
+    depends_on: [steering, cdn1, cdn2, cdn3]
+    networks:
+      default:
+        aliases: [dash-client.default.svc.cluster.local]
+  gateway:
+    build: ../gateway
+    depends_on: [client]
+    ports:
+      - "127.0.0.1:15000:80"
