@@ -1,5 +1,6 @@
 __pycache__/
-**/dataset/
+/bucket/*
+!/bucket/README.md
 results/
 logs/
 .venv/

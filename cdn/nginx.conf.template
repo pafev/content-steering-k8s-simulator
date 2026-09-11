@@ -1,0 +1,59 @@
+worker_processes auto;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=media_cache:10m
+                     max_size=1g inactive=1h use_temp_path=off;
+
+    log_format cdn_json escape=json
+        '{"ts":$msec,'
+        '"pathway":"${PATHWAY_ID}",'
+        '"status":$status,'
+        '"size":$body_bytes_sent,'
+        '"duration":$request_time,'
+        '"cache_status":"$upstream_cache_status",'
+        '"upstream_duration":"$upstream_response_time",'
+        '"request":{"uri":"$request_uri","headers":{'
+        '"CMCD":"$http_cmcd",'
+        '"CMCD-Request":"$http_cmcd_request",'
+        '"CMCD-Object":"$http_cmcd_object",'
+        '"CMCD-Status":"$http_cmcd_status",'
+        '"CMCD-Session":"$http_cmcd_session"}}}';
+
+    access_log syslog:server=telemetry-service.default.svc.cluster.local:9000,facility=local7,tag=cdn,nohostname cdn_json;
+
+    server {
+        listen 80;
+        listen 443 ssl;
+
+        ssl_certificate /etc/nginx/certs/cdn.pem;
+        ssl_certificate_key /etc/nginx/certs/cdn-key.pem;
+
+        location / {
+            proxy_pass http://origin-server.default.svc.cluster.local:80;
+            proxy_set_header Host origin-server.default.svc.cluster.local;
+
+            proxy_cache media_cache;
+            # Static bucket objects: session/decision/CMCD query metadata must
+            # not fragment the cache. Query-selected media is not supported.
+            proxy_cache_key "$proxy_host$uri";
+            proxy_cache_lock on;
+            proxy_cache_revalidate on;
+            proxy_cache_background_update on;
+            proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
+            proxy_cache_valid 200 206 1h;
+
+            proxy_hide_header Cache-Control;
+            add_header Cache-Control "no-store, no-cache, must-revalidate, max-age=0" always;
+            add_header X-Cache-Status $upstream_cache_status always;
+            add_header Access-Control-Allow-Origin "*" always;
+            add_header Access-Control-Expose-Headers "X-Cache-Status" always;
+        }
+    }
+}

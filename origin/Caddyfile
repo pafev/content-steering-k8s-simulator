@@ -1,0 +1,5 @@
+:80 {
+    root * /srv
+    header Cache-Control "public, max-age=3600"
+    file_server
+}
