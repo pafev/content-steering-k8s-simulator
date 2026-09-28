@@ -65,12 +65,11 @@ services:
         aliases: [cdn-3.default.svc.cluster.local]
   client:
     build: ../client
-    depends_on: [steering, cdn1, cdn2, cdn3]
     networks:
       default:
         aliases: [dash-client.default.svc.cluster.local]
   gateway:
     build: ../gateway
-    depends_on: [client]
+    depends_on: [client, steering, telemetry, cdn1, cdn2, cdn3]
     ports:
       - "127.0.0.1:15000:80"
