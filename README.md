@@ -29,13 +29,15 @@ pod. Um cluster Kind existente sem `/mnt/bucket` precisa ser recriado.
 ## Arquitetura
 
 ```text
-browser -> gateway -> dash-client -> steering-server
-                         |       \-> telemetry-service -> Redis
-                         \-> CDN 1/2/3 -> origin-server
-                                  \----> telemetry-service (UDP logs)
+browser -> gateway -> dash-client (UI estática e dash.js)
+                 |-> steering-server -> Redis
+                 |-> telemetry-service -> Redis
+                 \-> CDN 1/2/3 -> origin-server
+                          \----> telemetry-service (UDP logs)
 ```
 
-- `dash-client`: UI, dash.js e proxy para CSS, telemetria e CDNs.
+- `gateway`: roteamento para UI, CSS, telemetria e CDNs; substituição da autoridade no MPD.
+- `dash-client`: servidor de arquivos estáticos da UI e do dash.js.
 - `steering-server`: aplica a política do run e retorna `PATHWAY-PRIORITY`.
 - `cdn-1..3`: caches pull-through independentes; misses consultam a origem.
 - `origin-server`: único componente que monta o bucket.
@@ -60,11 +62,11 @@ Clientes do mesmo run compartilham estatísticas, mas recebem decisões por
 requisição. Atualizações concorrentes usam transações Redis, portanto workers do
 CSS não mantêm modelos divergentes.
 
-Os MPDs anunciam três BaseURLs absolutas com a autoridade de empacotamento
-`http://content-steering.invalid`. O proxy troca somente essa autoridade pelo
-gateway visível ao navegador, preservando as três opções no dash.js. A seleção é
-nativa do player; Pathway Cloning não é necessário para os pathways fixos deste
-simulador.
+Os MPDs anunciam três BaseURLs e a URL do ContentSteering como URLs absolutas com
+a autoridade de empacotamento `http://content-steering.invalid`. O gateway troca
+somente essa autoridade pelo gateway visível ao navegador, preservando as três
+opções no dash.js. A seleção é nativa do player; Pathway Cloning não é necessário
+para os pathways fixos deste simulador.
 
 ## Políticas e aprendizado
 
@@ -126,6 +128,10 @@ Logs UDP são best effort.
 
 ## Testes
 
+O bundle dash.js é uma dependência versionada em `client/assets/vendor/dashjs/`.
+Veja [as instruções da dependência](client/assets/vendor/dashjs/README.md) para
+upgrade e checksum. Comportamento específico do simulador fica em `main.js`.
+
 ```sh
 python3 -m venv .venv
 .venv/bin/pip install -r steering-server/requirements.txt pytest
@@ -139,6 +145,10 @@ oferece um smoke test isolado em `localhost:15000`; defina `TEST_CERT_DIR` com
 playback, CMCD, cache, estado compartilhado e seleção de mais de uma CDN.
 [examples/cmcd_client.py](examples/cmcd_client.py) gera carga CMCD controlada sem
 executar vídeo.
+
+[Revisão multi-client e plano de evolução](docs/multi-client-learning-review.md)
+registra a verificação da influência entre clientes e as limitações matemáticas
+das políticas em operação assíncrona.
 
 ## Invariantes do simulador
 
