@@ -14,22 +14,23 @@ before ServiceDescription/Period. Adjust the content directory to the bucket:
 <BaseURL serviceLocation="cdn-3">http://content-steering.invalid/cdn3/Eldorado/4sec/avc/</BaseURL>
 ```
 
-Use this literal placeholder authority. The dash-client delivery proxy replaces
-it with the browser-visible scheme, host and port. dash.js intentionally accepts
-only the first BaseURL when several relative URLs occur at the same MPD level;
+Use this literal placeholder authority for both the BaseURLs and ContentSteering.
+The gateway delivery proxy replaces it with the browser-visible scheme, host
+and port. dash.js intentionally accepts only the first BaseURL when several
+relative URLs occur at the same MPD level;
 absolute delivered URLs preserve all three native steering choices.
 
 Place ContentSteering at MPD level **after Period**, following the
 [MPEG schema element order](https://github.com/MPEGGroup/DASHSchema/blob/6th-Ed/DASH-MPD.xsd):
 
 ```xml
-<ContentSteering queryBeforeStart="true" defaultServiceLocation="cdn-1">/steering/manifest.json</ContentSteering>
+<ContentSteering queryBeforeStart="true" defaultServiceLocation="cdn-1">http://content-steering.invalid/steering/manifest.json</ContentSteering>
 ```
 
 Remove the old `cloud` BaseURL and any duplicate ContentSteering element.
 SegmentTemplate URLs must resolve relative to these BaseURLs; absolute
 representation URLs that bypass the gateways are outside this setup.
 Use the same objects and representation layout for all pathways.
-The origin and CDN caches keep this packaged MPD unchanged. The dash-client
-rewrites only its placeholder authority while delivering the MPD to the browser.
+The origin and CDN caches keep this packaged MPD unchanged. The gateway
+rewrites only the placeholder authority while delivering the MPD to the browser.
 An MPD without ContentSteering can play but will not exercise the CSS.
