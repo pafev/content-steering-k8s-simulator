@@ -54,11 +54,11 @@ def main():
                 break
             first.wait_for_timeout(250)
         else:
-            raise AssertionError("first client produced no correlated CMCD feedback")
+            raise AssertionError(f"first client produced no CMCD learning feedback; "
+                                 f"errors={errors[-5:]}, console={console[-5:]}, "
+                                 f"reports={reports[-5:]}")
 
-        # A later client must consume the model updated by the first client. On a
-        # zero-latency local VOD, one client can buffer the whole asset before the
-        # next steering TTL, so staggering is the deterministic multi-client test.
+        # A later client consumes the shared CMCD delivery model.
         start_client()
         first.wait_for_timeout(args.seconds * 1000)
         state = context.request.get(f"{args.base}/telemetry/v1/state/{run_id}").json()
@@ -71,7 +71,9 @@ def main():
         assert all(item["time"] > 3 and not item.get("error") for item in playback)
         assert sum(int(v.get("n", 0)) for v in state["model"].values()) >= 2
         assert all(any("cs_decision=" in url for url in media) for media in media_by_page)
+        assert state["config"]["reward_version"] == "cmcd-delivery-duration-v1"
         assert any('e=rr' in body for body in reports)
+        assert any('e=rr' in body and 'd=' in body for body in reports)
         assert sum(int(v.get("cache_hit_count", 0)) for v in state["cdn"].values()) > 0
         assert sum(bool(v) for v in media_by_page) == 2
         assert len({url.split("/", 4)[3] for media in media_by_page for url in media}) >= 2

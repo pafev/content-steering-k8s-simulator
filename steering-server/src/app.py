@@ -23,7 +23,7 @@ def create_app(connection=None):
     )
     ttl = int(os.getenv("STEERING_TTL_SECONDS", "5"))
     retention = int(os.getenv("RUN_TTL_SECONDS", "86400"))
-    feedback_age = int(os.getenv("FEEDBACK_MAX_AGE_SECONDS", "60"))
+    session_ttl = int(os.getenv("SESSION_TTL_SECONDS", "3600"))
 
     @app.get("/healthz")
     def health():
@@ -48,27 +48,24 @@ def create_app(connection=None):
                 pipe = db.pipeline()
                 for pathway in PATHWAYS:
                     pipe.hgetall(f"run:{run_id}:model:{pathway}")
-                pipe.get(f"run:{run_id}:last_feedback")
-                *models, last_feedback = pipe.execute()
+                models = pipe.execute()
                 stats = dict(zip(PATHWAYS, models))
-                # Freshness does not erase classical cumulative model memory.
-                stale = bool(last_feedback) and time.time() - float(last_feedback) > feedback_age
                 buffer_ms = max(0.0, float(session.get("buffer_ms", 0)))
                 context = [1.0, buffer_ms / (buffer_ms + 10000.0)]
                 seed = hashlib.sha256(f"{config['seed']}:{sequence}".encode()).hexdigest()
                 priority = rank_pathways(
-                    config["strategy"], PATHWAYS, {} if stale else stats,
+                    config["strategy"], PATHWAYS, stats,
                     context, random.Random(seed),
                 )
                 decision_id = uuid.uuid4().hex
                 decision = dict(
-                    id=decision_id, run_id=run_id, sid=sid, sequence=sequence,
+                    version=2, id=decision_id, run_id=run_id, sid=sid, sequence=sequence,
                     strategy=config["strategy"], context=context,
-                    priority=priority, created_at=time.time(), consumed=False,
-                    stale_feedback=stale,
+                    priority=priority, preferred_pathway=priority[0],
+                    created_at=time.time(),
                 )
                 pipe = db.pipeline()
-                pipe.set(f"decision:{decision_id}", json.dumps(decision), ex=feedback_age)
+                pipe.set(f"decision:{decision_id}", json.dumps(decision), ex=session_ttl)
                 pipe.set(f"run:{run_id}:last_decision", json.dumps(decision), ex=retention)
                 pipe.xadd(f"run:{run_id}:decisions", {"data": json.dumps(decision)}, maxlen=5000)
                 pipe.expire(f"run:{run_id}:decisions", retention)

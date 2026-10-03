@@ -53,6 +53,7 @@ async function load(event) {
     cid: new URL(byId("manifest").value, location.href).href,
     seed: 1,
   };
+  const contentId = new URL(session.cid).pathname.replace(/^\/cdn[123]\//, "/");
   byId("session-id").textContent = session.sid;
   byId("priority").textContent = "—";
   byId("active-pathway").textContent = "—";
@@ -98,19 +99,19 @@ async function load(event) {
     streaming: {
       cmcd: {
         enabled: true, applyParametersFromMpd: false,
-        version: 2, mode: "header", sid: session.sid, cid: session.cid,
+        version: 2, mode: "header", sid: session.sid, cid: contentId,
         includeInRequests: ["segment", "mpd"],
         enabledKeys: ["v", "sid", "cid", "ot", "br", "d", "mtp", "bl", "bs", "su"],
         eventTargets: [
           {
             enabled: true, url: location.origin + "/telemetry/v1/cmcd/events",
             events: ["rr"], includeInRequests: ["segment"], batchSize: 1,
-            enabledKeys: ["v", "sid", "cid", "e", "ts", "sn", "url", "ot", "rc", "ttfb", "ttlb", "bl"],
+            enabledKeys: ["v", "sid", "cid", "e", "ts", "sn", "url", "ot", "rc", "ttfb", "ttlb", "d", "bl"],
           },
           {
             enabled: true, url: location.origin + "/telemetry/v1/cmcd/events",
-            events: ["ps", "e"], batchSize: 1,
-            enabledKeys: ["v", "sid", "cid", "e", "ts", "sn", "sta", "ec", "msd"],
+            events: ["e"], batchSize: 1,
+            enabledKeys: ["v", "sid", "cid", "e", "ts", "sn", "sta", "ec"],
           },
         ],
       },

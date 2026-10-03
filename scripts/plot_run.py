@@ -51,7 +51,7 @@ def plot(directory, output, formats):
         reward_ax.plot(times, means, marker="o", color=COLORS[pathway], label=pathway)
         count_ax.step(times, counts, where="post", color=COLORS[pathway], label=pathway)
         count_ax.scatter(times, counts, s=16, color=COLORS[pathway])
-    reward_ax.set(title="Shared cumulative mean reward (latency baseline)", ylabel="Mean reward", ylim=(-0.03, 1.03))
+    reward_ax.set(title="Shared mean CMCD delivery reward", ylabel="Mean reward", ylim=(-0.03, 1.03))
     count_ax.set(title="Shared accepted learning observations", ylabel="Cumulative count")
     reward_ax.legend()
     count_ax.legend()
@@ -114,7 +114,7 @@ def plot(directory, output, formats):
 <style>body{{font-family:system-ui;max-width:1500px;margin:24px auto;padding:16px}}img{{width:100%}}</style>
 <h1>{html.escape(strategy)}: run overview</h1>
 <p>{html.escape(directory.name)}</p><img src="overview.png" alt="Six charts of the shared model and client behavior">
-<p>Rewards are latency scores, not playback QoE. Unobserved means are blank.
+<p>Rewards use successful segment duration and download time; reported failures score zero. Unobserved means are blank.
 Model and playback curves are sampled; pathway markers are captured response events.
 Time starts before the first client launches. Cache warmup is excluded.</p>
 </html>"""

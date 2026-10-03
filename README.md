@@ -55,8 +55,8 @@ somente o estado de decisão no Redis e não acessa a API Kubernetes.
 3. dash.js seleciona uma `BaseURL@serviceLocation` e envia CMCD nas requisições.
 4. A CDN registra status, bytes, duração e cache por UDP.
 5. CMCD Response Mode (`e=rr`) e eventos do player chegam por HTTP.
-6. Uma resposta elegível atualiza o modelo compartilhado; novas consultas ao
-   CSS usam esse estado.
+6. Cada resposta CMCD de tentativa de segmento de vídeo correlacionada atualiza
+   o braço da CDN solicitada; novas consultas ao CSS usam o modelo compartilhado.
 
 Clientes do mesmo run compartilham estatísticas, mas recebem decisões por
 requisição. Atualizações concorrentes usam transações Redis, portanto workers do
@@ -82,24 +82,24 @@ A primeira sessão define estratégia e seed do run; registros conflitantes são
 rejeitados. A seed controla o RNG das decisões, mas ordem dos relatórios e
 agendamento de rede também devem ser registrados para reprodução completa.
 
-Cada decisão aceita no máximo uma recompensa: a primeira resposta de segmento de
-vídeo correlacionada pelo seu ID. Init, áudio, segmentos posteriores, eventos do
-player e logs CDN permanecem observáveis, mas não contam como novos pulls. A
-recompensa é atribuída à CDN efetivamente reportada, contemplando fallbacks.
-
-Para HTTP 2xx, a recompensa básica é `1 / (1 + ttlb_ms / REWARD_SCALE_MS)`;
-outros status recebem zero. O scale padrão é 1000 ms. Essa função é uma baseline
-configurável, não uma métrica QoE padronizada.
+Cada tentativa de segmento de vídeo com `e=rr`, sessão e decisão válidas treina
+a CDN da URL solicitada, uma vez por relatório CMCD. Resposta `rc=0` ou erro
+HTTP 4xx/5xx recebe recompensa zero. Para resposta 2xx, a recompensa é
+`d/(d+ttlb)`, usando duração de mídia `d` e tempo de download `ttlb` em
+milissegundos. Uma CDN de fallback bem-sucedida recebe sua própria recompensa;
+nenhum stall anterior é atribuído a ela. O resultado é um indicador limitado de
+capacidade de entrega de mídia, não a QoE observada da sessão. É uma escolha do
+simulador, não uma fórmula prescrita por CMCD ou Content Steering.
 
 LinUCB usa o contexto `[1, buffer_ms / (buffer_ms + 10000)]`, capturado antes da
 decisão. `RELOAD-URI` transporta o `decision_id` privado, que o cliente copia para
 `cs_decision` na URL da mídia. Esses parâmetros servem à correlação do simulador
 e não são campos CMCD.
 
-Decisões expiram após `FEEDBACK_MAX_AGE_SECONDS` (60 por padrão). Feedback tardio
-não treina; quando o último feedback aceito fica stale, a seleção volta à
-exploração cold-start sem apagar o modelo acumulado. Redis indisponível faz o CSS
-retornar prioridade fixa para preservar o playback.
+Decisões permanecem disponíveis durante a sessão (uma hora por padrão). Um
+relatório atrasado ainda treina se a sessão e a decisão existem. Ausência de
+relatório não implica falha nem gera recompensa zero. Redis indisponível faz o
+CSS retornar prioridade fixa para preservar o playback.
 
 ## CMCD e RUM
 
@@ -110,7 +110,8 @@ status, bytes, duração e cache observados no servidor.
 Valores declarados pelo cliente continuam não confiáveis quando copiados para
 logs CDN. `mtp` é uma estimativa histórica do cliente, não throughput medido na
 requisição atual. Pares inválidos (`ttfb > ttlb`) ficam na auditoria, mas não
-entram nos agregados. O aprendizado usa `ttlb`; logs CDN não geram uma segunda
+entram nos agregados. O aprendizado usa `rc`, `d` e `ttlb` do relatório CMCD;
+`bl` fornece contexto ao LinUCB. Logs CDN não geram uma segunda
 atualização do modelo.
 
 ## Interfaces e estado
@@ -125,6 +126,16 @@ chaves de run expiram após 24 horas de inatividade. Os streams Redis
 `run:<id>:decisions` e `run:<id>:observations` guardam aproximadamente os últimos
 5.000 registros. Eles são diagnósticos limitados, não armazenamento durável.
 Logs UDP são best effort.
+
+## Executar cinco clientes e aquecer caches
+
+[scripts/multi_client.py](scripts/multi_client.py) aquece e verifica as três CDNs,
+inicia cinco browsers isolados no mesmo run e salva decisões, cache, playback e
+estado compartilhado. `--strategy all` executa UCB1, LinUCB e epsilon-greedy em
+runs independentes. Veja [instruções e limitações](docs/multi-client-runner.md).
+
+[Recompensas e QoE](docs/rewards-and-qoe.md) preserva a explicação da conversa e
+as referências sobre bandits em streaming e redes.
 
 ## Testes
 
@@ -154,7 +165,7 @@ das políticas em operação assíncrona.
 
 - Estado e configuração são isolados por `run_id`; um cliente não reseta o run.
 - A estratégia escolhida não é substituída por outra heurística de telemetria.
-- Uma decisão produz no máximo uma atualização atômica do modelo.
+- Cada resposta de segmento correlacionada atualiza o modelo no máximo uma vez.
 - Contexto é capturado no momento da decisão e preservado até o feedback.
 - Identidades ou rótulos definidos pelo avaliador não entram nas políticas.
 - Cache, telemetria e decisão permanecem componentes separados.

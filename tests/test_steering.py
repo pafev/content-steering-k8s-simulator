@@ -20,8 +20,8 @@ def decision(client, run="run", sid="honest"):
     return data, token
 
 
-def report(token, sid="honest", pathway="cdn-1", duration=100, **extra):
-    return dict(e="rr", sid=sid, ts=123456, ot="v", rc=200, ttlb=duration,
+def report(token, sid="honest", pathway="cdn-1", duration=100, sequence=0, **extra):
+    return dict(e="rr", sid=sid, sn=sequence, ts=123456, ot="v", rc=200, ttlb=duration, d=4000,
                 url=f"http://localhost/cdn{pathway[-1]}/video/seg-1.m4s?cs_decision={token}", **extra)
 
 
@@ -41,12 +41,12 @@ def test_two_clients_share_learning_other_run_is_isolated(services, db):
     store.register_session("run", "honest")
     store.register_session("run", "other")
     store.register_session("independent", "third")
-    for sid, duration in [("honest", 1000), ("other", 0)]:
+    for sid, duration in [("honest", 100), ("other", 200)]:
         _, token = decision(client, sid=sid)
         assert store.record_cmcd_event(report(token, sid=sid, duration=duration)) == "learned"
     model = store.get_state("run")["model"]["cdn-1"]
     assert int(model["n"]) == 2
-    assert float(model["reward_sum"]) == 1.5
+    assert 1 < float(model["reward_sum"]) < 2
     assert store.get_state("independent")["model"]["cdn-1"] == {}
     assert db.get("policy:run") is None  # no heuristic overriding the strategy
 
@@ -68,10 +68,82 @@ def test_duplicate_feedback_is_one_atomic_update(services):
     client, _, store = services
     store.register_session("run", "honest")
     _, token = decision(client)
+    payload = report(token)
     with concurrent.futures.ThreadPoolExecutor(8) as pool:
-        results = list(pool.map(lambda _: store.record_cmcd_event(report(token)), range(16)))
+        results = list(pool.map(lambda _: store.record_cmcd_event(payload), range(16)))
     assert results.count("learned") == 1
     assert int(store.get_state("run")["model"]["cdn-1"]["n"]) == 1
+
+
+@pytest.mark.parametrize("strategy", ["ucb1", "linucb", "epsilon_greedy"])
+def test_client_a_feedback_changes_client_b_only_in_same_run(services, db, strategy):
+    client, _, store = services
+    for run, sid in [("shared", "a"), ("shared", "b"), ("separate", "c")]:
+        store.register_session(run, sid, strategy=strategy)
+        for path, reward in [("cdn-1", 10.02), ("cdn-2", 10), ("cdn-3", 2)]:
+            db.hset(f"run:{run}:model:{path}", mapping={
+                "n": 20, "reward_sum": reward, "a00": 20, "a01": 0,
+                "a11": 0, "b0": reward, "b1": 0,
+            })
+    before, _ = decision(client, run="shared", sid="b")
+    control, _ = decision(client, run="separate", sid="c")
+    _, token = decision(client, run="shared", sid="a")
+    assert store.record_cmcd_event(report(token, sid="a", pathway="cdn-2", duration=0)) == "learned"
+    after, _ = decision(client, run="shared", sid="b")
+    unchanged, _ = decision(client, run="separate", sid="c")
+    assert before["PATHWAY-PRIORITY"][0] == "cdn-1"
+    assert after["PATHWAY-PRIORITY"][0] == "cdn-2"
+    assert db.hget("run:separate:model:cdn-2", "n") == "20"
+    assert control["PATHWAY-PRIORITY"][0] == unchanged["PATHWAY-PRIORITY"][0]
+
+
+def test_failure_gets_zero_and_successful_fallback_gets_own_reward(services, db):
+    client, _, store = services
+    store.register_session("run", "honest")
+    _, token = decision(client)
+    failed = report(token, pathway="cdn-1")
+    failed["rc"] = 0
+    failed.pop("ttlb")
+    assert store.record_cmcd_event(failed) == "learned"
+    http_error = report(token, pathway="cdn-1", sequence=1)
+    http_error["rc"] = 503
+    http_error.pop("ttlb")
+    assert store.record_cmcd_event(http_error) == "learned"
+    assert store.record_cmcd_event(report(token, pathway="cdn-2", sequence=2)) == "learned"
+    assert db.hget("run:run:model:cdn-1", "n") == "2"
+    assert float(db.hget("run:run:model:cdn-1", "reward_sum")) == 0
+    assert db.hget("run:run:model:cdn-2", "n") == "1"
+    assert float(db.hget("run:run:model:cdn-2", "reward_sum")) == pytest.approx(4000/4100)
+
+
+def test_success_needs_duration_and_non_video_does_not_train(services):
+    client, api, store = services
+    store.register_session("run", "honest")
+    _, token = decision(client)
+    incomplete = report(token)
+    incomplete.pop("d")
+    assert store.record_cmcd_event(incomplete) == "invalid_duration"
+    audio = report(token)
+    audio["ot"] = "a"
+    assert store.record_cmcd_event(audio) == "observation_only"
+    assert api.post("/v1/qoe", json={}).status_code == 404
+    assert api.post("/v1/qoe/windows", json={}).status_code == 404
+    assert store.get_state("run")["model"] == {p: {} for p in PATHS}
+
+
+def test_delayed_and_later_responses_still_train(services, db):
+    client, _, store = services
+    store.register_session("run", "honest")
+    _, token = decision(client)
+    assert store.record_cmcd_event(report(token)) == "learned"
+    late = json.loads(db.get(f"decision:{token}"))
+    late["created_at"] -= 10_000
+    db.set(f"decision:{token}", json.dumps(late), keepttl=True)
+    later = report(token, pathway="cdn-2", duration=8000, sequence=1)
+    assert store.record_cmcd_event(later) == "learned"
+    assert store.record_cmcd_event(later) == "already_observed"
+    assert float(store.get_state("run")["model"]["cdn-2"]["reward_sum"]) == pytest.approx(1/3)
+    assert store.get_state("run")["model"]["cdn-1"]["n"] == "1"
 
 
 def test_registration_and_feedback_boundaries(services, db):
@@ -86,9 +158,6 @@ def test_registration_and_feedback_boundaries(services, db):
     store.register_session("different", "other")
     assert store.record_cmcd_event(report(token, sid="other")) == "session_mismatch"
     assert store.record_cmcd_event(report(token, duration=float("nan"))) == "invalid_duration"
-    audio = report(token)
-    audio["ot"] = "a"
-    assert store.record_cmcd_event(audio) == "observation_only"
     db.delete(f"decision:{token}")
     assert store.record_cmcd_event(report(token)) == "expired_decision"
 
@@ -97,7 +166,7 @@ def test_client_reports_enter_through_cmcd_http(services):
     client, api, store = services
     assert api.post("/v1/sessions", json={"run_id": "run", "sid": "honest"}).status_code == 204
     _, token = decision(client)
-    body = f'e=rr,ot=v,rc=200,sid="honest",ts=123,ttlb=50,url="http://localhost/cdn1/a.m4s?cs_decision={token}",v=2'
+    body = f'd=4000,e=rr,ot=v,rc=200,sid="honest",sn=0,ts=123,ttlb=50,url="http://localhost/cdn1/a.m4s?cs_decision={token}",v=2'
     response = api.post("/v1/cmcd/events", data=body, content_type="application/cmcd")
     assert response.get_json()["results"] == {"learned": 1}
     assert store.get_state("run")["model"]["cdn-1"]["n"] == "1"
@@ -128,14 +197,14 @@ def test_cdn_cmcd_does_not_double_count_reward(services):
     assert state["model"]["cdn-1"] == {}
 
 
-def test_stale_feedback_preserves_model_but_explores(services, db):
+def test_old_feedback_does_not_reset_model(services, db):
     client, _, store = services
     store.register_session("run", "honest")
     db.set("run:run:last_feedback", 1)
-    db.hset("run:run:model:cdn-1", mapping={"n": 100, "reward_sum": 99})
-    _, token = decision(client)
-    assert json.loads(db.get(f"decision:{token}"))["stale_feedback"] is True
-    assert db.hget("run:run:model:cdn-1", "n") == "100"
+    for pathway, reward in [("cdn-1", 19), ("cdn-2", 2), ("cdn-3", 2)]:
+        db.hset(f"run:run:model:{pathway}", mapping={"n": 20, "reward_sum": reward})
+    data, _ = decision(client)
+    assert data["PATHWAY-PRIORITY"][0] == "cdn-1"
 
 
 def test_redis_failure_keeps_playback_fallback():

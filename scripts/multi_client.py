@@ -2,17 +2,19 @@
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import re
 import time
 from urllib.parse import quote, urlencode, urlsplit
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 import uuid
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 STRATEGIES = ("ucb1", "linucb", "epsilon_greedy", "fixed", "random")
+BROWSER_ACCEPT_ENCODING = "gzip, deflate, br, zstd"
 
 
 def positive(value):
@@ -23,11 +25,14 @@ def positive(value):
 
 
 def fetch(url, timeout):
-    with urlopen(url, timeout=timeout) as response:
+    with urlopen(Request(url, headers={"Accept-Encoding": BROWSER_ACCEPT_ENCODING}), timeout=timeout) as response:
         # Drain the entire response: HEAD would not fill the object cache.
-        while response.read(1024 * 1024):
-            pass
-        return response.headers.get("X-Cache-Status", "missing")
+        digest, size = hashlib.sha256(), 0
+        while chunk := response.read(1024 * 1024):
+            digest.update(chunk)
+            size += len(chunk)
+        return dict(cache=response.headers.get("X-Cache-Status", "missing"),
+                    status=response.status, bytes=size, sha256=digest.hexdigest())
 
 
 def warm_caches(base, bucket, mpd, workers, timeout):
@@ -76,16 +81,35 @@ def warm_caches(base, bucket, mpd, workers, timeout):
     with ThreadPoolExecutor(max_workers=workers) as pool:
         first = list(pool.map(lambda url: fetch(url, timeout), urls))
         second = list(pool.map(lambda url: fetch(url, timeout), urls))
-    failures = [url for url, status in zip(urls, second) if status != "HIT"]
+    failures = [dict(url=url, first=a, second=b) for url, a, b in zip(urls, first, second)
+                if b["cache"] != "HIT" or b["status"] != 200 or a["sha256"] != b["sha256"]]
+    # Gateway MPDs have rewritten authorities; media objects should match the
+    # packaged bytes. Verify representative objects per CDN without extra GETs.
+    representatives = []
+    for cdn in (1, 2, 3):
+        candidates = [(obj, a, b) for obj, a, b in zip(
+            objects, first[(cdn-1)*len(objects):cdn*len(objects)],
+            second[(cdn-1)*len(objects):cdn*len(objects)])
+                      if obj.suffix != ".mpd"]
+        for obj, a, b in candidates[:3]:
+            expected = hashlib.sha256(obj.read_bytes()).hexdigest()
+            representatives.append(dict(cdn=f"cdn-{cdn}", object=obj.relative_to(bucket).as_posix(),
+                                        first=a, second=b, expected_sha256=expected,
+                                        matches=a["sha256"] == expected and b["sha256"] == expected))
+    failures.extend(item for item in representatives if not item["matches"])
     result = {"objects_per_cdn": len(objects), "requests": len(urls) * 2,
-              "first_pass_hits": first.count("HIT"), "verified_hits": second.count("HIT")}
+              "accept_encoding": BROWSER_ACCEPT_ENCODING,
+              "first_pass_hits": sum(item["cache"] == "HIT" for item in first),
+              "verified_hits": sum(item["cache"] == "HIT" for item in second),
+              "representatives": representatives, "failures": failures[:20],
+              "warmed_paths": [urlsplit(url).path for url in urls]}
     if failures:
         raise RuntimeError(f"Warmup verification failed for {len(failures)} objects; first: {failures[0]}. "
                            "Check cache capacity, object cacheability and concurrent traffic.")
     return result
 
 
-def observe(playwright, args, strategy, output):
+def observe(playwright, args, strategy, output, warmup=None):
     run_id = f"multi-{strategy}-{uuid.uuid4().hex}"
     directory = output / run_id
     directory.mkdir()
@@ -97,6 +121,8 @@ def observe(playwright, args, strategy, output):
     started = time.monotonic()
     event_file = (directory / "events.jsonl").open("w")
     samples_file = (directory / "samples.jsonl").open("w")
+    warmed = set(warmup["warmed_paths"]) if warmup else set()
+    unexpected_misses = []
 
     def record(kind, client, **data):
         event_file.write(json.dumps({"elapsed": round(time.monotonic() - started, 3),
@@ -118,7 +144,16 @@ def observe(playwright, args, strategy, output):
                 record("capture_error", client, message=str(error))
         elif re.match(r"/cdn[123]/", path):
             record("media", client, url=response.url, status=response.status,
-                   cache=response.headers.get("x-cache-status"))
+                   cache=response.headers.get("x-cache-status"),
+                   range=response.request.headers.get("range"),
+                   accept_encoding=response.request.all_headers().get("accept-encoding"),
+                   vary=response.headers.get("vary"),
+                   cache_control=response.headers.get("cache-control"))
+            if warmed and path in warmed and not path.endswith(".mpd") and response.headers.get("x-cache-status") != "HIT":
+                unexpected_misses.append(dict(client=client, url=response.url,
+                                              status=response.status,
+                                              cache=response.headers.get("x-cache-status"),
+                                              range=response.request.headers.get("range")))
 
     try:
         print(f"\nRun {run_id}\nArtifacts: {directory}", flush=True)
@@ -178,6 +213,8 @@ def observe(playwright, args, strategy, output):
             pages[0].wait_for_timeout(min(args.interval, remaining) * 1000)
 
         feedback = sum(int(model.get("n", 0)) for model in state["model"].values())
+        state = contexts[0].request.get(
+            f"{args.base}/telemetry/v1/state/{run_id}", timeout=args.timeout * 1000).json()
         problems = []
         if errors:
             problems.append("Browser JavaScript errors occurred")
@@ -187,8 +224,14 @@ def observe(playwright, args, strategy, output):
             problems.append("At least one client did not play successfully")
         if not feedback:
             problems.append("No accepted learning feedback")
+        if unexpected_misses:
+            problems.append(f"{len(unexpected_misses)} warmed browser media requests were not cache HITs")
+        (directory / "cache-validation.json").write_text(json.dumps({
+            "warmed_browser_misses": unexpected_misses,
+            "browser_media_checked": bool(warmed),
+        }, indent=2) + "\n")
         summary = {"run_id": run_id, "strategy": strategy, "sessions": sessions,
-                   "configuration": vars(args), "final": sample, "errors": errors,
+                   "configuration": vars(args), "final": {**sample, "state": state}, "errors": errors,
                    "problems": problems, "success": not problems}
         (directory / "summary.json").write_text(json.dumps(summary, indent=2, default=str) + "\n")
         if problems:
@@ -237,7 +280,7 @@ def main():
     runs = []
     with sync_playwright() as playwright:
         for strategy in (STRATEGIES[:3] if args.strategy == "all" else [args.strategy]):
-            runs.append(observe(playwright, args, strategy, output))
+            runs.append(observe(playwright, args, strategy, output, warmup))
     (output / "runs.json").write_text(json.dumps(runs, indent=2) + "\n")
     print(f"\nCompleted. Results: {output}", flush=True)
 

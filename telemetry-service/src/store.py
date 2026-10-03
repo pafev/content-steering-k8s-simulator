@@ -1,4 +1,5 @@
 """CMCD ingestion and shared, cumulative sufficient statistics in Redis."""
+import hashlib
 import json
 import math
 import os
@@ -9,15 +10,11 @@ from urllib.parse import parse_qs, urlsplit
 import redis
 
 from cmcd import cmcd_value, extract_cmcd
-
 PATHWAYS = ["cdn-1", "cdn-2", "cdn-3"]
 STRATEGIES = {"fixed", "random", "epsilon_greedy", "ucb1", "linucb"}
 IDENTIFIER = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 SESSION_TTL = int(os.getenv("SESSION_TTL_SECONDS", "3600"))
 RUN_TTL = int(os.getenv("RUN_TTL_SECONDS", "86400"))
-REWARD_SCALE_MS = float(os.getenv("REWARD_SCALE_MS", "1000"))
-if not math.isfinite(REWARD_SCALE_MS) or REWARD_SCALE_MS <= 0:
-    raise ValueError("REWARD_SCALE_MS must be finite and positive")
 
 
 def number(value):
@@ -45,7 +42,10 @@ class TelemetryStore:
             raise ValueError("run_id and sid must contain 1-128 letters, digits, '_' or '-'")
         if strategy not in STRATEGIES or type(seed) is not int:
             raise ValueError("Unknown strategy or invalid seed")
-        config = dict(strategy=strategy, seed=seed, reward_scale_ms=REWARD_SCALE_MS)
+        config = dict(strategy=strategy, seed=seed,
+                      reward_version="cmcd-delivery-duration-v1",
+                      policy_version=1, epsilon=0.2, linucb_alpha=1.0,
+                      ucb1_bonus="sqrt(2*ln(completed_observations)/arm_observations)")
         session_key, config_key = f"session:{sid}", f"run:{run_id}:config"
         with self.redis.pipeline() as pipe:
             while True:
@@ -131,52 +131,59 @@ class TelemetryStore:
         pipe.expire(f"run:{run_id}:config", RUN_TTL)
         pipe.expire(key, RUN_TTL)
         pipe.execute()
-        result = self._learn(run_id, sid, pathway, url, event)
+        result = self._learn_response(run_id, sid, pathway, url, event)
         pipe = self.redis.pipeline()
         self._audit(pipe, run_id, "client_cmcd", event, learning=result)
         pipe.execute()
         return result
 
-    def _learn(self, run_id, sid, pathway, url, event):
-        # One observation per steering decision: first eligible video response.
-        # Audio, init objects and subsequent segments remain observable, not extra pulls.
+    def _learn_response(self, run_id, sid, pathway, url, event):
+        """Credit the CDN attempted by one correlated CMCD video response."""
         if event.get("e") != "rr" or event.get("ot") != "v" or not pathway:
             return "observation_only"
         duration, status = cmcd_value(event, "ttlb", "v"), cmcd_value(event, "rc", "v")
-        if not number(status) or not 100 <= status <= 599:
+        if type(status) is not int or not (status == 0 or 200 <= status < 300 or 400 <= status <= 599):
             return "invalid_response"
-        if not number(duration) or duration < 0:
+        if duration is not None and (not number(duration) or duration < 0):
             return "invalid_duration"
+        if 200 <= status < 300:
+            media_duration = cmcd_value(event, "d", "v")
+            if not number(duration) or not number(media_duration) or media_duration <= 0:
+                return "invalid_duration"
+            reward = media_duration / (media_duration + duration)
+        else:
+            reward = 0.0
         decision_id = parse_qs(urlsplit(url).query).get("cs_decision", [""])[0]
         if not re.fullmatch(r"[a-f0-9]{32}", decision_id):
             return "uncorrelated"
-        key = f"decision:{decision_id}"
+        raw = self.redis.get(f"decision:{decision_id}")
+        if not raw:
+            return "expired_decision"
+        decision = json.loads(raw)
+        if decision["sid"] != sid or decision["run_id"] != run_id:
+            return "session_mismatch"
+        sequence = event.get("sn")
+        observation_id = (str(sequence) if type(sequence) is int and sequence >= 0 else
+                          hashlib.sha256(f"{url}|{event.get('ts')}".encode()).hexdigest())
+        seen_key = f"run:{run_id}:response:{sid}:{observation_id}"
+        model_key = f"run:{run_id}:model:{pathway}"
+        x0, x1 = decision["context"]
         with self.redis.pipeline() as pipe:
             while True:
                 try:
-                    pipe.watch(key)
-                    raw = pipe.get(key)
-                    if not raw:
-                        return "expired_decision"
-                    decision = json.loads(raw)
-                    if decision["sid"] != sid or decision["run_id"] != run_id:
-                        return "session_mismatch"
-                    if decision["consumed"]:
+                    pipe.watch(seen_key)
+                    if pipe.exists(seen_key):
                         return "already_observed"
-                    config = json.loads(pipe.get(f"run:{run_id}:config"))
-                    # Bounded engineering baseline, not a standardized QoE objective.
-                    reward = 1 / (1 + duration / config["reward_scale_ms"]) if 200 <= status < 300 else 0.0
-                    x0, x1 = decision["context"]
-                    model_key = f"run:{run_id}:model:{pathway}"
-                    decision.update(consumed=True, observed_pathway=pathway, reward=reward)
                     pipe.multi()
-                    pipe.set(key, json.dumps(decision), keepttl=True)
+                    pipe.set(seen_key, decision_id, ex=RUN_TTL)
                     pipe.hincrby(model_key, "n", 1)
-                    for field, value in dict(reward_sum=reward, a00=x0*x0, a01=x0*x1, a11=x1*x1, b0=reward*x0, b1=reward*x1).items():
+                    for field, value in dict(reward_sum=reward, a00=x0*x0, a01=x0*x1,
+                                             a11=x1*x1, b0=reward*x0, b1=reward*x1).items():
                         pipe.hincrbyfloat(model_key, field, value)
                     pipe.expire(model_key, RUN_TTL)
                     pipe.set(f"run:{run_id}:last_feedback", time.time(), ex=RUN_TTL)
-                    self._audit(pipe, run_id, "learning_update", event, decision=decision)
+                    self._audit(pipe, run_id, "learning_update", event, decision=decision,
+                                pathway=pathway, reward=reward)
                     pipe.execute()
                     return "learned"
                 except redis.WatchError:
