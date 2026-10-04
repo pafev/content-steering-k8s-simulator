@@ -132,16 +132,17 @@ Logs UDP são best effort.
 [scripts/multi_client.py](scripts/multi_client.py) aquece e verifica as três CDNs,
 inicia cinco browsers isolados no mesmo run e salva decisões, cache, playback e
 estado compartilhado. `--strategy all` executa UCB1, LinUCB e epsilon-greedy em
-runs independentes. Veja [instruções e limitações](docs/multi-client-runner.md).
-
-[Recompensas e QoE](docs/rewards-and-qoe.md) preserva a explicação da conversa e
-as referências sobre bandits em streaming e redes.
+runs independentes. Veja [como executar as simulações](docs/simulations.md),
+incluindo latência com NetChaos e um cliente dash.js que altera seu CMCD.
+[Design e regra de aprendizado](docs/design.md) resume a interpretação dos
+resultados.
 
 ## Testes
 
 O bundle dash.js é uma dependência versionada em `client/assets/vendor/dashjs/`.
 Veja [as instruções da dependência](client/assets/vendor/dashjs/README.md) para
-upgrade e checksum. Comportamento específico do simulador fica em `main.js`.
+upgrade e checksum. Comportamento específico do simulador fica em `main.js` e,
+para o teste opcional de telemetria falsa, `cmcd-lie.js`.
 
 ```sh
 python3 -m venv .venv
@@ -154,12 +155,6 @@ Os testes usam instâncias Redis temporárias. [tests/compose.yaml](tests/compos
 oferece um smoke test isolado em `localhost:15000`; defina `TEST_CERT_DIR` com
 `cdn.pem` e `cdn-key.pem`. [tests/browser_smoke.py](tests/browser_smoke.py) valida
 playback, CMCD, cache, estado compartilhado e seleção de mais de uma CDN.
-[examples/cmcd_client.py](examples/cmcd_client.py) gera carga CMCD controlada sem
-executar vídeo.
-
-[Revisão multi-client e plano de evolução](docs/multi-client-learning-review.md)
-registra a verificação da influência entre clientes e as limitações matemáticas
-das políticas em operação assíncrona.
 
 ## Invariantes do simulador
 
