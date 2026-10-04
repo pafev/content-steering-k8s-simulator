@@ -167,6 +167,15 @@ def observe(playwright, args, strategy, output, warmup=None):
             except Exception as error:
                 errors.append({"client": "malicious", "error": str(error)})
 
+    def start_player(page, query):
+        page.goto(f"{args.base}/?{urlencode(query)}", timeout=args.timeout * 1000)
+        page.get_by_role("button", name="Load video").click()
+        page.wait_for_function("document.querySelector('video').readyState >= 1",
+                               timeout=args.timeout * 1000)
+        sid = page.locator("#session-id").inner_text()
+        page.evaluate("document.querySelector('video').play()")
+        return sid
+
     try:
         print(f"\nRun {run_id}\nArtifacts: {directory}", flush=True)
         for index in range(args.clients):
@@ -177,15 +186,9 @@ def observe(playwright, args, strategy, output, warmup=None):
             client = index + 1
             page.on("response", lambda response, c=client: on_response(response, c))
             page.on("pageerror", lambda error, c=client: errors.append({"client": c, "error": str(error)}))
-            query = urlencode({"run_id": run_id, "strategy": strategy, "mpd": args.mpd})
-            page.goto(f"{args.base}/?{query}", timeout=args.timeout * 1000)
-            page.get_by_role("button", name="Load video").click()
-            page.wait_for_function("document.querySelector('video').readyState >= 1",
-                                   timeout=args.timeout * 1000)
-            sid = page.locator("#session-id").inner_text()
+            sid = start_player(page, {"run_id": run_id, "strategy": strategy, "mpd": args.mpd})
             sessions.append({"client": client, "sid": sid})
             record("session", client, sid=sid)
-            page.evaluate("document.querySelector('video').play()")
             if index + 1 < args.clients and args.stagger:
                 page.wait_for_timeout(args.stagger * 1000)
 
@@ -198,15 +201,10 @@ def observe(playwright, args, strategy, output, warmup=None):
                 malicious_page = context.new_page()
                 malicious_page.on("response", on_malicious_response)
                 malicious_page.on("pageerror", lambda error: errors.append({"client": "malicious", "error": str(error)}))
-                query = urlencode({"run_id": run_id, "strategy": strategy, "mpd": args.mpd,
-                                   "attack_cdn": args.malicious_cdn,
-                                   "attack_ttlb_ms": args.malicious_ttlb_ms})
-                malicious_page.goto(f"{args.base}/?{query}", timeout=args.timeout * 1000)
-                malicious_page.get_by_role("button", name="Load video").click()
-                malicious_page.wait_for_function("document.querySelector('video').readyState >= 1",
-                                                 timeout=args.timeout * 1000)
-                malicious_sid = malicious_page.locator("#session-id").inner_text()
-                malicious_page.evaluate("document.querySelector('video').play()")
+                malicious_sid = start_player(malicious_page, {
+                    "run_id": run_id, "strategy": strategy, "mpd": args.mpd,
+                    "attack_cdn": args.malicious_cdn, "attack_ttlb_ms": args.malicious_ttlb_ms,
+                })
                 malicious_started_at = round(time.monotonic() - started, 3)
                 print(f"  modified player started at t={malicious_started_at:.1f}s, sid={malicious_sid}", flush=True)
             response = contexts[0].request.get(
@@ -268,10 +266,14 @@ def observe(playwright, args, strategy, output, warmup=None):
                 delivered = {media_identity(item["url"]) for item in malicious_media if item["status"] == 200}
                 matched = sum(media_identity(item["url"]) in delivered for item in audit)
                 learned = sum(item.get("results", {}).get("learned", 0) for item in malicious_feedback)
-                malicious = dict(sid=malicious_sid, started_at=malicious_started_at,
-                                 playback_time=playback, audit=audit, media=malicious_media,
-                                 feedback=malicious_feedback, matched_deliveries=matched)
-                (directory / "modified-player.json").write_text(json.dumps(malicious, indent=2) + "\n")
+                details = dict(sid=malicious_sid, started_at=malicious_started_at,
+                               playback_time=playback, audit=audit, media=malicious_media,
+                               feedback=malicious_feedback, matched_deliveries=matched)
+                (directory / "modified-player.json").write_text(json.dumps(details, indent=2) + "\n")
+                malicious = dict(artifact="modified-player.json", sid=malicious_sid,
+                                 started_at=malicious_started_at, playback_time=playback,
+                                 altered_reports=len(audit), matched_deliveries=matched,
+                                 learned_feedback=learned)
                 if not audit or matched != len(audit) or not learned or playback <= 0:
                     problems.append("Modified player did not deliver and report correlated video segments")
         (directory / "cache-validation.json").write_text(json.dumps({
