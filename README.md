@@ -1,148 +1,95 @@
 # DASH Content Steering simulator
 
-Simulador multi-client de DASH Content Steering em Kubernetes/Kind, com playback
-real em dash.js 5.2.1, três caches CDN Nginx, origem Caddy, telemetria CMCD,
-Redis e um Content Steering Server (CSS). Baseado em
-[alissonpef/Content-Steering](https://github.com/alissonpef/Content-Steering).
+Multi-client DASH Content Steering simulator on Kubernetes/Kind, with real playback using dash.js 5.2.1, three Nginx CDN caches, a Caddy origin, CMCD telemetry, Redis, and a Content Steering Server (CSS). Based on [alissonpef/Content-Steering](https://github.com/alissonpef/Content-Steering).
 
-O objetivo é experimentar políticas de Content Steering sobre métricas agregadas
-de vários clientes. O projeto implementa DASH; playback HLS não está incluído.
+The goal is to experiment with Content Steering policies over aggregated metrics from multiple clients. The project implements DASH; HLS playback is not included.
 
-## Executar
+## Running
 
-Requisitos: Docker, Kind, kubectl, mkcert e mídia em `bucket/`. Somente a origem
-monta esse diretório, em modo somente leitura. Veja [bucket/README.md](bucket/README.md).
+Requirements: Docker, Kind, kubectl, mkcert, and media in `bucket/`. Only the origin mounts this directory, in read-only mode. See [bucket/README.md](bucket/README.md).
 
 ```sh
 ./setup.sh
 kubectl --context kind-kind port-forward pod/gateway 5000:80
 ```
 
-Abra http://localhost:5000, informe um run ID, selecione a estratégia e carregue
-o MPD. O link para outro cliente preserva o run e a estratégia; cada carregamento
-cria um novo `sid`. Um novo run ID cria um modelo independente.
+Open http://localhost:5000, enter a run ID, select the strategy, and load the MPD. The link for another client preserves the run and strategy; each load creates a new `sid`. A new run ID creates an independent model.
 
-O setup reconstrói e carrega as imagens locais, reinicia os pods da aplicação e
-limpa os caches CDN efêmeros. O estado Redis permanece até a substituição do seu
-pod. Um cluster Kind existente sem `/mnt/bucket` precisa ser recriado.
+The setup rebuilds and loads local images, restarts application pods, and clears ephemeral CDN caches. The Redis state remains until its pod is replaced. An existing Kind cluster without `/mnt/bucket` needs to be recreated.
 
-## Arquitetura
+## Architecture
 
 ```text
-browser -> gateway -> dash-client (UI estática e dash.js)
+browser -> gateway -> dash-client (static UI and dash.js)
                  |-> steering-server -> Redis
                  |-> telemetry-service -> Redis
                  \-> CDN 1/2/3 -> origin-server
                           \----> telemetry-service (UDP logs)
 ```
 
-- `gateway`: roteamento para UI, CSS, telemetria e CDNs; substituição da autoridade no MPD.
-- `dash-client`: servidor de arquivos estáticos da UI e do dash.js.
-- `steering-server`: aplica a política do run e retorna `PATHWAY-PRIORITY`.
-- `cdn-1..3`: caches pull-through independentes; misses consultam a origem.
-- `origin-server`: único componente que monta o bucket.
-- `telemetry-service`: correlaciona sessões, CMCD e logs CDN.
-- `Redis`: sessões, configuração, decisões, estatísticas e auditoria por run.
+- `gateway`: routing for UI, CSS, telemetry, and CDNs; replaces the authority in the MPD.
+- `dash-client`: static file server for the UI and dash.js.
+- `steering-server`: applies the run's policy and returns `PATHWAY-PRIORITY`.
+- `cdn-1..3`: independent pull-through caches; misses query the origin.
+- `origin-server`: the only component that mounts the bucket.
+- `telemetry-service`: correlates sessions, CMCD, and CDN logs.
+- `Redis`: sessions, configuration, decisions, statistics, and audit per run.
 
-O NetChaos é responsável por latência, banda e congestionamento. O CSS consome
-somente o estado de decisão no Redis e não acessa a API Kubernetes.
+NetChaos is responsible for latency, bandwidth, and congestion. The CSS consumes only the decision state in Redis and does not access the Kubernetes API.
 
-### Fluxo
+### Flow
 
-1. O cliente registra a correlação `sid -> run_id`.
-2. dash.js consulta o CSS e recebe `VERSION`, `TTL`, `RELOAD-URI` e
-   `PATHWAY-PRIORITY`.
-3. dash.js seleciona uma `BaseURL@serviceLocation` e envia CMCD nas requisições.
-4. A CDN registra status, bytes, duração e cache por UDP.
-5. CMCD Response Mode (`e=rr`) e eventos do player chegam por HTTP.
-6. Cada resposta CMCD de tentativa de segmento de vídeo correlacionada atualiza
-   o braço da CDN solicitada; novas consultas ao CSS usam o modelo compartilhado.
+1. The client registers the `sid -> run_id` correlation.
+2. dash.js queries the CSS and receives `VERSION`, `TTL`, `RELOAD-URI`, and `PATHWAY-PRIORITY`.
+3. dash.js selects a `BaseURL@serviceLocation` and sends CMCD with the requests.
+4. The CDN logs status, bytes, duration, and cache via UDP.
+5. CMCD Response Mode (`e=rr`) and player events arrive via HTTP.
+6. Each correlated CMCD response for a video segment attempt updates the requested CDN arm; new queries to the CSS use the shared model.
 
-Clientes do mesmo run compartilham estatísticas, mas recebem decisões por
-requisição. Atualizações concorrentes usam transações Redis, portanto workers do
-CSS não mantêm modelos divergentes.
+Clients in the same run share statistics, but receive decisions per request. Concurrent updates use Redis transactions, so CSS workers do not maintain diverging models.
 
-Os MPDs anunciam três BaseURLs e a URL do ContentSteering como URLs absolutas com
-a autoridade de empacotamento `http://content-steering.invalid`. O gateway troca
-somente essa autoridade pelo gateway visível ao navegador, preservando as três
-opções no dash.js. A seleção é nativa do player; Pathway Cloning não é necessário
-para os pathways fixos deste simulador.
+The MPDs announce three BaseURLs and the ContentSteering URL as absolute URLs with the packaging authority `http://content-steering.invalid`. The gateway swaps only this authority for the gateway visible to the browser, preserving the three options in dash.js. The selection is native to the player; Pathway Cloning is not required for the fixed pathways of this simulator.
 
-## Políticas e aprendizado
+## Policies and Learning
 
-| Estratégia | Implementação |
+| Strategy | Implementation |
 | --- | --- |
-| `fixed` | Prioridade fixa `cdn-1`, `cdn-2`, `cdn-3` |
-| `random` | Permutação uniforme por consulta |
-| `epsilon_greedy` | Médias amostrais, epsilon 0,2 e exploração de braços novos |
-| `ucb1` | `media + sqrt(2 log(total) / observacoes)` |
-| `linucb` | Modelos ridge disjuntos, identidade inicial e alpha 1 |
+| `fixed` | Fixed priority `cdn-1`, `cdn-2`, `cdn-3` |
+| `random` | Uniform permutation per query |
+| `epsilon_greedy` | Sample means, epsilon 0.2 and exploration of new arms |
+| `ucb1` | `mean + sqrt(2 log(total) / observations)` |
+| `linucb` | Disjoint ridge models, initial identity and alpha 1 |
 
-A primeira sessão define estratégia e seed do run; registros conflitantes são
-rejeitados. A seed controla o RNG das decisões, mas ordem dos relatórios e
-agendamento de rede também devem ser registrados para reprodução completa.
+The first session defines the run's strategy and seed; conflicting records are rejected. The seed controls the RNG for decisions, but report ordering and network scheduling must also be recorded for complete reproduction.
 
-Cada tentativa de segmento de vídeo com `e=rr`, sessão e decisão válidas treina
-a CDN da URL solicitada, uma vez por relatório CMCD. Resposta `rc=0` ou erro
-HTTP 4xx/5xx recebe recompensa zero. Para resposta 2xx, a recompensa é
-`d/(d+ttlb)`, usando duração de mídia `d` e tempo de download `ttlb` em
-milissegundos. Uma CDN de fallback bem-sucedida recebe sua própria recompensa;
-nenhum stall anterior é atribuído a ela. O resultado é um indicador limitado de
-capacidade de entrega de mídia, não a QoE observada da sessão. É uma escolha do
-simulador, não uma fórmula prescrita por CMCD ou Content Steering.
+Each valid video segment attempt with `e=rr`, session, and decision trains the requested URL's CDN, once per CMCD report. A response of `rc=0` or HTTP error 4xx/5xx receives zero reward. For a 2xx response, the reward is `d/(d+ttlb)`, using media duration `d` and download time `ttlb` in milliseconds. A successful fallback CDN receives its own reward; no previous stall is attributed to it. The result is a limited indicator of media delivery capacity, not the session's observed QoE. This is a simulator choice, not a formula prescribed by CMCD or Content Steering.
 
-LinUCB usa o contexto `[1, buffer_ms / (buffer_ms + 10000)]`, capturado antes da
-decisão. `RELOAD-URI` transporta o `decision_id` privado, que o cliente copia para
-`cs_decision` na URL da mídia. Esses parâmetros servem à correlação do simulador
-e não são campos CMCD.
+LinUCB uses the context `[1, buffer_ms / (buffer_ms + 10000)]`, captured prior to the decision. `RELOAD-URI` carries the private `decision_id`, which the client copies to `cs_decision` in the media URL. These parameters serve simulator correlation and are not CMCD fields.
 
-Decisões permanecem disponíveis durante a sessão (uma hora por padrão). Um
-relatório atrasado ainda treina se a sessão e a decisão existem. Ausência de
-relatório não implica falha nem gera recompensa zero. Redis indisponível faz o
-CSS retornar prioridade fixa para preservar o playback.
+Decisions remain available during the session (one hour by default). A delayed report still trains if the session and decision exist. Absence of a report does not imply failure nor does it yield zero reward. An unavailable Redis makes the CSS return fixed priority to preserve playback.
 
-## CMCD e RUM
+## CMCD and RUM
 
-CMCD v2 Response/Event Mode fornece a perspectiva RUM do player: tempos de
-resposta, buffer, estado, startup e erros. Logs CDN complementam essa visão com
-status, bytes, duração e cache observados no servidor.
+CMCD v2 Response/Event Mode provides the player's RUM perspective: response times, buffer, state, startup, and errors. CDN logs complement this view with status, bytes, duration, and cache observed on the server.
 
-Valores declarados pelo cliente continuam não confiáveis quando copiados para
-logs CDN. `mtp` é uma estimativa histórica do cliente, não throughput medido na
-requisição atual. Pares inválidos (`ttfb > ttlb`) ficam na auditoria, mas não
-entram nos agregados. O aprendizado usa `rc`, `d` e `ttlb` do relatório CMCD;
-`bl` fornece contexto ao LinUCB. Logs CDN não geram uma segunda
-atualização do modelo.
+Values declared by the client remain untrusted when copied to CDN logs. `mtp` is a historical client estimate, not measured throughput on the current request. Invalid pairs (`ttfb > ttlb`) remain in the audit, but do not enter aggregates. Learning uses `rc`, `d`, and `ttlb` from the CMCD report; `bl` provides context for LinUCB. CDN logs do not generate a second model update.
 
-## Interfaces e estado
+## Interfaces and State
 
-- `GET /steering/manifest.json` e `GET /steering/healthz`
+- `GET /steering/manifest.json` and `GET /steering/healthz`
 - `POST /telemetry/v1/sessions`
-- `POST /telemetry/v1/cmcd/events` (`application/cmcd`, 1–100 registros)
-- `GET /telemetry/v1/state/<run_id>` e `GET /telemetry/healthz`
+- `POST /telemetry/v1/cmcd/events` (`application/cmcd`, 1–100 records)
+- `GET /telemetry/v1/state/<run_id>` and `GET /telemetry/healthz`
 
-Sessões expiram após uma hora sem renovação; a UI renova a cada 30 segundos. As
-chaves de run expiram após 24 horas de inatividade. Os streams Redis
-`run:<id>:decisions` e `run:<id>:observations` guardam aproximadamente os últimos
-5.000 registros. Eles são diagnósticos limitados, não armazenamento durável.
-Logs UDP são best effort.
+Sessions expire after one hour without renewal; the UI renews every 30 seconds. Run keys expire after 24 hours of inactivity. The Redis streams `run:<id>:decisions` and `run:<id>:observations` hold approximately the last 5,000 records. They are limited diagnostics, not durable storage. UDP logs are best effort.
 
-## Executar cinco clientes e aquecer caches
+## Run five clients and warm up caches
 
-[scripts/multi_client.py](scripts/multi_client.py) aquece e verifica as três CDNs,
-inicia cinco browsers isolados no mesmo run e salva decisões, cache, playback e
-estado compartilhado. `--strategy all` executa UCB1, LinUCB e epsilon-greedy em
-runs independentes. Veja [como executar as simulações](docs/simulations.md),
-incluindo latência com NetChaos e um cliente dash.js que altera seu CMCD.
-[Design e regra de aprendizado](docs/design.md) resume a interpretação dos
-resultados.
+[scripts/multi_client.py](scripts/multi_client.py) warms up and verifies the three CDNs, starts five isolated browsers in the same run, and saves decisions, cache, playback, and shared state. `--strategy all` runs UCB1, LinUCB, and epsilon-greedy in independent runs. See [how to run simulations](docs/simulations.md), including latency with NetChaos and a dash.js client that alters its CMCD. [Design and learning rule](docs/design.md) summarizes the interpretation of results.
 
-## Testes
+## Tests
 
-O bundle dash.js é uma dependência versionada em `client/assets/vendor/dashjs/`.
-Veja [as instruções da dependência](client/assets/vendor/dashjs/README.md) para
-upgrade e checksum. Comportamento específico do simulador fica em `main.js` e,
-para o teste opcional de telemetria falsa, `cmcd-lie.js`.
+The dash.js bundle is a versioned dependency in `client/assets/vendor/dashjs/`. See [the dependency instructions](client/assets/vendor/dashjs/README.md) for upgrade and checksum. Simulator-specific behavior resides in `main.js` and, for the optional false telemetry test, `cmcd-lie.js`.
 
 ```sh
 python3 -m venv .venv
@@ -151,25 +98,22 @@ python3 -m venv .venv
 node --check client/assets/js/main.js
 ```
 
-Os testes usam instâncias Redis temporárias. [tests/compose.yaml](tests/compose.yaml)
-oferece um smoke test isolado em `localhost:15000`; defina `TEST_CERT_DIR` com
-`cdn.pem` e `cdn-key.pem`. [tests/browser_smoke.py](tests/browser_smoke.py) valida
-playback, CMCD, cache, estado compartilhado e seleção de mais de uma CDN.
+Tests use temporary Redis instances. [tests/compose.yaml](tests/compose.yaml) provides an isolated smoke test at `localhost:15000`; set `TEST_CERT_DIR` with `cdn.pem` and `cdn-key.pem`. [tests/browser_smoke.py](tests/browser_smoke.py) validates playback, CMCD, cache, shared state, and selection of more than one CDN.
 
-## Invariantes do simulador
+## Simulator Invariants
 
-- Estado e configuração são isolados por `run_id`; um cliente não reseta o run.
-- A estratégia escolhida não é substituída por outra heurística de telemetria.
-- Cada resposta de segmento correlacionada atualiza o modelo no máximo uma vez.
-- Contexto é capturado no momento da decisão e preservado até o feedback.
-- Identidades ou rótulos definidos pelo avaliador não entram nas políticas.
-- Cache, telemetria e decisão permanecem componentes separados.
+- State and configuration are isolated by `run_id`; a client does not reset the run.
+- The chosen strategy is not overridden by another telemetry heuristic.
+- Each correlated segment response updates the model at most once.
+- Context is captured at decision time and preserved until feedback.
+- Evaluator-defined identities or labels do not enter the policies.
+- Cache, telemetry, and decision remain separate components.
 
-## Base técnica
+## Technical Foundations
 
-- [ETSI TS 103 998](https://www.etsi.org/deliver/etsi_ts/103900_103999/103998/01.01.01_60/ts_103998v010101p.pdf): sinalização DASH e interação com o CSS; não prescreve algoritmo de decisão.
-- [Apple WWDC22](https://developer.apple.com/videos/play/wwdc2022/10144/): políticas regionais, buckets e `RELOAD-URI`; não documenta a arquitetura interna do Apple TV+.
-- [dash.js CMCD](https://dashif.org/dash.js/pages/usage/cmcd.html): Request, Response e Event Mode.
-- [Akamai — player analytics with CMCD](https://www.akamai.com/blog/cloud/get-your-player-analytics-with-cmcd): observações complementares do player e CDN.
+- [ETSI TS 103 998](https://www.etsi.org/deliver/etsi_ts/103900_103999/103998/01.01.01_60/ts_103998v010101p.pdf): DASH signaling and CSS interaction; does not prescribe a decision algorithm.
+- [Apple WWDC22](https://developer.apple.com/videos/play/wwdc2022/10144/): regional policies, buckets, and `RELOAD-URI`; does not document Apple TV+ internal architecture.
+- [dash.js CMCD](https://dashif.org/dash.js/pages/usage/cmcd.html): Request, Response, and Event Mode.
+- [Akamai — player analytics with CMCD](https://www.akamai.com/blog/cloud/get-your-player-analytics-with-cmcd): complementary player and CDN observations.
 - [Auer et al., 2002](https://doi.org/10.1023/A:1013689704352): UCB1.
-- [Li et al., WWW 2010](https://www.schapire.net/papers/www10.pdf): LinUCB disjunto.
+- [Li et al., WWW 2010](https://www.schapire.net/papers/www10.pdf): Disjoint LinUCB.
