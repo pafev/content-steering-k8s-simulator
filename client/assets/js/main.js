@@ -8,16 +8,18 @@ let session;
 let decisionId = null;
 let registrationPending = false;
 const pathways = ["cdn-1", "cdn-2", "cdn-3"];
+const telemetryBase = "http://telemetry-service.default.svc.cluster.local:30600";
+const steeringHost = "steering-server.default.svc.cluster.local";
 
 byId("run-id").value = query.get("run_id") || newId();
 byId("strategy").value = query.get("strategy") || "ucb1";
-byId("manifest").value = query.get("mpd") || "/cdn1/Eldorado/4sec/avc/manifest.mpd";
+byId("manifest").value = query.get("mpd") || "https://cdn-1.default.svc.cluster.local/Eldorado/4sec/avc/manifest.mpd";
 
 async function registerSession() {
   if (!session || registrationPending) return;
   registrationPending = true;
   try {
-    const response = await fetch("/telemetry/v1/sessions", {
+    const response = await fetch(telemetryBase + "/v1/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(session),
@@ -38,7 +40,7 @@ function setLinks() {
     run_id: session.run_id, strategy: session.strategy, mpd: session.cid,
   });
   byId("share-link").href = url;
-  byId("state-link").href = "/telemetry/v1/state/" + encodeURIComponent(session.run_id);
+  byId("state-link").href = telemetryBase + "/v1/state/" + encodeURIComponent(session.run_id);
   history.replaceState(null, "", url);
 }
 
@@ -53,7 +55,7 @@ async function load(event) {
     cid: new URL(byId("manifest").value, location.href).href,
     seed: 1,
   };
-  const contentId = new URL(session.cid).pathname.replace(/^\/cdn[123]\//, "/");
+  const contentId = new URL(session.cid).pathname;
   byId("session-id").textContent = session.sid;
   byId("priority").textContent = "—";
   byId("active-pathway").textContent = "—";
@@ -68,10 +70,10 @@ async function load(event) {
   player = dashjs.MediaPlayer().create();
   player.addRequestInterceptor((request) => {
     const url = new URL(request.url, location.href);
-    if (url.origin === location.origin && url.pathname.startsWith("/steering/")) {
+    if (url.hostname === steeringHost && url.pathname === "/manifest.json") {
       url.searchParams.set("run_id", session.run_id);
       url.searchParams.set("sid", session.sid);
-    } else if (url.origin === location.origin && /^\/cdn[123]\//.test(url.pathname) && decisionId) {
+    } else if (/^cdn-[123]\.default\.svc\.cluster\.local$/.test(url.hostname) && decisionId) {
       // Kept out of the CDN cache key. CMCD rr includes the actual request URL.
       url.searchParams.set("cs_decision", decisionId);
     }
@@ -82,8 +84,8 @@ async function load(event) {
     const data = e.currentSteeringResponseData;
     if (!data) return;
     byId("priority").textContent = (data.pathwayPriority || []).join(" → ");
-    const base = new URL(e.url || "/steering/manifest.json", location.href);
-    const reload = new URL(data.reloadUri || "/steering/manifest.json", base);
+    const base = new URL(e.url || "http://" + steeringHost + ":30500/manifest.json");
+    const reload = new URL(data.reloadUri || "/manifest.json", base);
     decisionId = reload.searchParams.get("decision_id");
   });
   player.on(dashjs.MediaPlayer.events.FRAGMENT_LOADING_STARTED, (e) => {
@@ -104,12 +106,12 @@ async function load(event) {
         enabledKeys: ["v", "sid", "cid", "ot", "br", "d", "mtp", "bl", "bs", "su"],
         eventTargets: [
           {
-            enabled: true, url: location.origin + "/telemetry/v1/cmcd/events",
+            enabled: true, url: telemetryBase + "/v1/cmcd/events",
             events: ["rr"], includeInRequests: ["segment"], batchSize: 1,
             enabledKeys: ["v", "sid", "cid", "e", "ts", "sn", "url", "ot", "rc", "ttfb", "ttlb", "d", "bl"],
           },
           {
-            enabled: true, url: location.origin + "/telemetry/v1/cmcd/events",
+            enabled: true, url: telemetryBase + "/v1/cmcd/events",
             events: ["e"], batchSize: 1,
             enabledKeys: ["v", "sid", "cid", "e", "ts", "sn", "sta", "ec"],
           },

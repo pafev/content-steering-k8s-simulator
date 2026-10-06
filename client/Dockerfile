@@ -1,11 +1,7 @@
-FROM nginx:alpine
+FROM mcr.microsoft.com/playwright/python:v1.63.0-noble
 
-COPY nginx.conf /etc/nginx/nginx.conf
-
-COPY ./assets /usr/share/nginx/html/assets
-COPY ./index.html /usr/share/nginx/html/
-
-# Add read permission so Nginx can serve the files
-RUN chmod -R 755 /usr/share/nginx/html/
-
-EXPOSE 80
+RUN pip install --no-cache-dir playwright==1.63.0
+COPY index.html /app/index.html
+COPY assets /app/assets
+COPY client.py /app/client.py
+CMD ["python", "/app/client.py"]
