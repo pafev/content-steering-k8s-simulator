@@ -22,9 +22,11 @@ def number(value):
 
 
 def pathway_from_url(url):
-    # Inspect the path, never a substring in the query/host.
-    match = re.match(r"^/cdn([123])/", urlsplit(url).path)
-    return f"cdn-{match[1]}" if match else None
+    parsed = urlsplit(url)
+    match = re.fullmatch(r"(cdn-[123])\.default\.svc\.cluster\.local", parsed.hostname or "")
+    if match:
+        return match[1]
+    return None
 
 
 class TelemetryStore:
