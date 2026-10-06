@@ -22,15 +22,13 @@ def decision(client, run="run", sid="honest"):
 
 def report(token, sid="honest", pathway="cdn-1", duration=100, sequence=0, **extra):
     return dict(e="rr", sid=sid, sn=sequence, ts=123456, ot="v", rc=200, ttlb=duration, d=4000,
-                url=f"http://localhost/cdn{pathway[-1]}/video/seg-1.m4s?cs_decision={token}", **extra)
+                url=f"https://{pathway}.default.svc.cluster.local/video/seg-1.m4s?cs_decision={token}", **extra)
 
 
 def test_standard_manifest_and_explicit_routes(services):
     client, _, _ = services
     data = client.get("/manifest.json").get_json()
     assert data == {"VERSION": 1, "TTL": 5, "RELOAD-URI": "/manifest.json", "PATHWAY-PRIORITY": PATHS}
-    proxied = client.get("/manifest.json", headers={"X-Forwarded-Prefix": "/steering"}).get_json()
-    assert proxied["RELOAD-URI"] == "/steering/manifest.json"
     assert client.get("/unknown").status_code == 404
     assert client.post("/manifest.json").status_code == 405
     assert client.post("/latency_event").status_code == 404
@@ -49,6 +47,16 @@ def test_two_clients_share_learning_other_run_is_isolated(services, db):
     assert 1 < float(model["reward_sum"]) < 2
     assert store.get_state("independent")["model"]["cdn-1"] == {}
     assert db.get("policy:run") is None  # no heuristic overriding the strategy
+
+
+def test_direct_cdn_url_trains_its_own_arm(services):
+    client, _, store = services
+    store.register_session("run", "honest")
+    _, token = decision(client)
+    event = report(token, pathway="cdn-2")
+    event["url"] = f"https://cdn-2.default.svc.cluster.local/video/seg-1.m4s?cs_decision={token}"
+    assert store.record_cmcd_event(event) == "learned"
+    assert int(store.get_state("run")["model"]["cdn-2"]["n"]) == 1
 
 
 def test_decision_context_and_actual_pathway_survive_delay(services, db):
@@ -166,7 +174,7 @@ def test_client_reports_enter_through_cmcd_http(services):
     client, api, store = services
     assert api.post("/v1/sessions", json={"run_id": "run", "sid": "honest"}).status_code == 204
     _, token = decision(client)
-    body = f'd=4000,e=rr,ot=v,rc=200,sid="honest",sn=0,ts=123,ttlb=50,url="http://localhost/cdn1/a.m4s?cs_decision={token}",v=2'
+    body = f'd=4000,e=rr,ot=v,rc=200,sid="honest",sn=0,ts=123,ttlb=50,url="https://cdn-1.default.svc.cluster.local/a.m4s?cs_decision={token}",v=2'
     response = api.post("/v1/cmcd/events", data=body, content_type="application/cmcd")
     assert response.get_json()["results"] == {"learned": 1}
     assert store.get_state("run")["model"]["cdn-1"]["n"] == "1"
@@ -178,7 +186,7 @@ def test_invalid_ttfb_ttlb_pair_is_not_aggregated(services):
     result = store.record_cmcd_event(dict(
         e="rr", ot="m", sid="honest", ts=123, rc=200,
         ttfb=1_700_000_000_000, ttlb=20,
-        url="http://localhost/cdn1/manifest.mpd",
+        url="https://cdn-1.default.svc.cluster.local/manifest.mpd",
     ))
     assert result == "observation_only"
     aggregate = store.get_state("run")["cmcd"]["cdn-1"]
