@@ -25,6 +25,13 @@ def create_app(connection=None):
     retention = int(os.getenv("RUN_TTL_SECONDS", "86400"))
     session_ttl = int(os.getenv("SESSION_TTL_SECONDS", "3600"))
 
+    @app.after_request
+    def allow_client_origin(response):
+        response.headers["Access-Control-Allow-Origin"] = "http://localhost:8080"
+        response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "CMCD, CMCD-Request, CMCD-Object, CMCD-Status, CMCD-Session"
+        return response
+
     @app.get("/healthz")
     def health():
         try:
@@ -75,8 +82,7 @@ def create_app(connection=None):
             app.logger.warning("Redis unavailable; using fixed playback fallback")
             priority, decision_id = PATHWAYS, None
         params = {k: v for k, v in (("run_id", run_id), ("sid", sid), ("decision_id", decision_id)) if v}
-        public_path = request.headers.get("X-Forwarded-Prefix", "") + "/manifest.json"
-        response = jsonify(DashParser().build(priority, params, ttl, public_path))
+        response = jsonify(DashParser().build(priority, params, ttl))
         response.headers["Cache-Control"] = "no-store"
         return response
 
