@@ -14,6 +14,14 @@ PATHWAYS = ("cdn-1", "cdn-2", "cdn-3")
 COLORS = {"cdn-1": "#0072B2", "cdn-2": "#D55E00", "cdn-3": "#009E73"}
 
 
+def media_pathway(url):
+    parsed = urlsplit(url)
+    for pathway in PATHWAYS:
+        if parsed.hostname == f"{pathway}.default.svc.cluster.local" or parsed.path.startswith(f"/cdn{pathway[-1]}/"):
+            return pathway
+    return None
+
+
 def records(path):
     if not path.exists():
         return []
@@ -62,7 +70,7 @@ def plot(directory, output, formats):
         steering = [e for e in events if e["kind"] == "steering" and e.get("status") == 200
                     and (e.get("response", {}).get("PATHWAY-PRIORITY") or [None])[0] == pathway]
         media = [e for e in events if e["kind"] == "media"
-                 and urlsplit(e.get("url", "")).path.startswith(f"/cdn{pathway[-1]}/")
+                 and media_pathway(e.get("url", "")) == pathway
                  and urlsplit(e["url"]).path.endswith(".m4s")]
         priority_ax.scatter([e["elapsed"] for e in steering], [e["client"] for e in steering],
                             c=COLORS[pathway], marker="s", s=50)
@@ -89,7 +97,7 @@ def plot(directory, output, formats):
     cache_statuses = ("HIT", "MISS", "OTHER / missing")
     for index, pathway in enumerate(PATHWAYS):
         media = [e for e in events if e["kind"] == "media"
-                 and urlsplit(e.get("url", "")).path.startswith(f"/cdn{pathway[-1]}/")]
+                 and media_pathway(e.get("url", "")) == pathway]
         bottom = 0
         for status, color in zip(cache_statuses, ("#009E73", "#E69F00", "#999999")):
             count = sum(e.get("cache") == status if status != "OTHER / missing"
