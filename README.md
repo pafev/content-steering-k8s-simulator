@@ -13,22 +13,22 @@ Requirements: Docker, Kind, kubectl, mkcert, and media in `bucket/`. Only the or
 kubectl --context kind-kind port-forward pod/gateway 5000:80
 ```
 
-Open http://localhost:5000, enter a run ID, select the strategy, and load the MPD. The link for another client preserves the run and strategy; each load creates a new `sid`. A new run ID creates an independent model.
+Open http://localhost:5000 to inspect gateway, CSS, and telemetry health. Read a run at `/state/<run_id>`. To create dash-client pods and run a simulation, use [scripts/multi_client.py](scripts/multi_client.py).
 
 The setup rebuilds and loads local images, restarts application pods, and clears ephemeral CDN caches. The Redis state remains until its pod is replaced. An existing Kind cluster without `/mnt/bucket` needs to be recreated.
 
 ## Architecture
 
 ```text
-browser -> gateway -> dash-client (static UI and dash.js)
-                 |-> steering-server -> Redis
-                 |-> telemetry-service -> Redis
-                 \-> CDN 1/2/3 -> origin-server
-                          \----> telemetry-service (UDP logs)
+user -> gateway (read-only inspection)
+dash-client pods -> CDN 1/2/3 (MPD and media) -> origin-server
+                -> steering-server -> Redis
+                -> telemetry-service -> Redis
+CDN 1/2/3 -----------------> telemetry-service (UDP logs)
 ```
 
-- `gateway`: routing for UI, CSS, telemetry, and CDNs; replaces the authority in the MPD.
-- `dash-client`: static file server for the UI and dash.js.
+- `gateway`: user-facing inspection endpoint; it is outside the playback path.
+- `dash-client` pods: one Chromium and dash.js player per simulated client.
 - `steering-server`: applies the run's policy and returns `PATHWAY-PRIORITY`.
 - `cdn-1..3`: independent pull-through caches; misses query the origin.
 - `origin-server`: the only component that mounts the bucket.
@@ -48,7 +48,7 @@ NetChaos is responsible for latency, bandwidth, and congestion. The CSS consumes
 
 Clients in the same run share statistics, but receive decisions per request. Concurrent updates use Redis transactions, so CSS workers do not maintain diverging models.
 
-The MPDs announce three BaseURLs and the ContentSteering URL as absolute URLs with the packaging authority `http://content-steering.invalid`. The gateway swaps only this authority for the gateway visible to the browser, preserving the three options in dash.js. The selection is native to the player; Pathway Cloning is not required for the fixed pathways of this simulator.
+The packaged MPD names the three CDN services and CSS directly. A dash-client pod loads its player page from its own loopback server, then dash.js selects among the CDN pathways. The gateway does not rewrite the MPD.
 
 ## Policies and Learning
 
@@ -76,16 +76,15 @@ Values declared by the client remain untrusted when copied to CDN logs. `mtp` is
 
 ## Interfaces and State
 
-- `GET /steering/manifest.json` and `GET /steering/healthz`
-- `POST /telemetry/v1/sessions`
-- `POST /telemetry/v1/cmcd/events` (`application/cmcd`, 1–100 records)
-- `GET /telemetry/v1/state/<run_id>` and `GET /telemetry/healthz`
+- CSS service: `GET /manifest.json` and `GET /healthz` on port 30500.
+- Telemetry service: `POST /v1/sessions`, `POST /v1/cmcd/events` (`application/cmcd`, 1–100 records), `GET /v1/state/<run_id>`, and `GET /healthz` on port 30600.
+- Gateway inspection: `GET /`, `/healthz`, `/css/healthz`, `/telemetry/healthz`, and `/state/<run_id>` on port 80.
 
 Sessions expire after one hour without renewal; the UI renews every 30 seconds. Run keys expire after 24 hours of inactivity. The Redis streams `run:<id>:decisions` and `run:<id>:observations` hold approximately the last 5,000 records. They are limited diagnostics, not durable storage. UDP logs are best effort.
 
 ## Run five clients and warm up caches
 
-[scripts/multi_client.py](scripts/multi_client.py) warms up and verifies the three CDNs, starts five isolated browsers in the same run, and saves decisions, cache, playback, and shared state. `--strategy all` runs UCB1, LinUCB, and epsilon-greedy in independent runs. See [how to run simulations](docs/simulations.md), including latency with NetChaos and a dash.js client that alters its CMCD. [Design and learning rule](docs/design.md) summarizes the interpretation of results.
+[scripts/multi_client.py](scripts/multi_client.py) warms the CDNs through temporary direct port forwards and records decisions, cache, playback, and shared state. It runs one dash-client pod per client. See [how to run simulations](docs/simulations.md) and the [risk matrix](docs/risk-matrix.md). [Design and learning rule](docs/design.md) summarizes the results.
 
 ## Tests
 
@@ -98,7 +97,7 @@ python3 -m venv .venv
 node --check client/assets/js/main.js
 ```
 
-Tests use temporary Redis instances. [tests/compose.yaml](tests/compose.yaml) provides an isolated smoke test at `localhost:15000`; set `TEST_CERT_DIR` with `cdn.pem` and `cdn-key.pem`. [tests/browser_smoke.py](tests/browser_smoke.py) validates playback, CMCD, cache, shared state, and selection of more than one CDN.
+Tests use temporary Redis instances. For browser and network validation, run a short [multi-client simulation](docs/simulations.md) in Kind.
 
 ## Simulator Invariants
 
