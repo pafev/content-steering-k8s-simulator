@@ -26,7 +26,6 @@ fi
 if [ -z "$BUCKET_MEDIA_FILE" ]; then
   error "Media bucket is missing or empty. Please populate $BUCKET_DIR before running."
 fi
-
 log "Checking Kind cluster..."
 if ! kind get clusters | grep -q "^$KIND_CLUSTER_NAME$"; then
   log "Cluster '$KIND_CLUSTER_NAME' not found. Creating..."
@@ -36,9 +35,6 @@ else
   kubectl config use-context "kind-$KIND_CLUSTER_NAME"
   if ! docker exec "${KIND_CLUSTER_NAME}-control-plane" test -d /mnt/bucket; then
     error "The existing Kind cluster does not mount /mnt/bucket. Recreate it with: kind delete cluster --name $KIND_CLUSTER_NAME"
-  fi
-  if kubectl get pod cdn-1 >/dev/null 2>&1; then
-    error "The existing Kind cluster still uses direct-mounted CDN pods. Recreate it with: kind delete cluster --name $KIND_CLUSTER_NAME"
   fi
 fi
 
@@ -76,7 +72,6 @@ if [ ! -f "$K8S_DEPLOY" ]; then
   error "Deployment manifest $K8S_DEPLOY not found."
 fi
 # Recreate only simulator standalone pods so rebuilt tags actually take effect.
-# This also removes the legacy standalone CSS before applying its Deployment.
 log "Restarting simulator pods (CDN caches are ephemeral)..."
 kubectl delete pod steering-server dash-client gateway origin-server cdn-1-edge-1 cdn-2-edge-1 cdn-3-edge-1 --ignore-not-found
 kubectl apply -f "$K8S_DEPLOY"
@@ -85,12 +80,12 @@ kubectl rollout status deployment/steering-server --timeout=180s
 kubectl rollout status deployment/telemetry-service --timeout=180s
 
 log "Waiting for pods to be ready..."
-kubectl wait --for=condition=Ready pod/dash-client pod/gateway pod/origin-server pod/cdn-1-edge-1 pod/cdn-2-edge-1 pod/cdn-3-edge-1 --timeout=300s
+kubectl wait --for=condition=Ready pod/gateway pod/origin-server pod/cdn-1-edge-1 pod/cdn-2-edge-1 pod/cdn-3-edge-1 --timeout=300s
 
 log "--------------------------------------------------"
 log " SETUP COMPLETED SUCCESSFULLY! "
 log "--------------------------------------------------"
-log "To access the UI, run:"
+log "To inspect the simulator, run:"
 log "  kubectl port-forward pod/gateway 5000:80"
-log "Then open: http://localhost:5000"
+log "Then open the read-only status page: http://localhost:5000"
 log "--------------------------------------------------"
