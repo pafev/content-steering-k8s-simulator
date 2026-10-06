@@ -53,7 +53,10 @@ http {
             add_header Cache-Control "no-store, no-cache, must-revalidate, max-age=0" always;
             add_header X-Cache-Status $upstream_cache_status always;
             add_header Access-Control-Allow-Origin "*" always;
+            add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+            add_header Access-Control-Allow-Headers "*" always;
             add_header Access-Control-Expose-Headers "X-Cache-Status" always;
+            if ($request_method = 'OPTIONS') { return 204; }
         }
     }
 }
