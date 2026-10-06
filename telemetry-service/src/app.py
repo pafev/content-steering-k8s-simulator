@@ -16,6 +16,14 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024
 
 
+@app.after_request
+def allow_client_origin(response):
+    response.headers["Access-Control-Allow-Origin"] = "http://localhost:8080"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return response
+
+
 @app.errorhandler(redis.RedisError)
 def redis_unavailable(error):
     app.logger.warning("Redis unavailable: %s", error)
