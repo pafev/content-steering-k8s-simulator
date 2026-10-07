@@ -142,7 +142,7 @@ class DashClients:
                                             "import socket; socket.create_connection(('127.0.0.1', 9222), 1).close()",
                                         ]
                                     },
-                                    "periodSeconds": 1,
+                                    "periodSeconds": 5,
                                 },
                             }
                         ]
@@ -171,6 +171,9 @@ class DashClients:
             )
             if self.fault_manifest:
                 self.fault_applied = True
+                applied_after = datetime.now(timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                )
                 subprocess.run(
                     [
                         "kubectl",
@@ -182,6 +185,7 @@ class DashClients:
                     ],
                     check=True,
                 )
+                sources = ("cdn-1-edge-1", "cdn-2-edge-1", "cdn-3-edge-1")
                 for _ in range(60):
                     result = subprocess.run(
                         [
@@ -192,24 +196,24 @@ class DashClients:
                             "-n",
                             "net-chaos-simulator-system",
                             "deployment/net-chaos-simulator-controller-manager",
-                            "--since=2m",
+                            f"--since-time={applied_after}",
                         ],
                         capture_output=True,
                         text=True,
                     )
                     if result.returncode == 0 and all(
                         sum(
-                            "Latency applied successfully" in line and name in line
+                            "Latency applied successfully" in line and source in line
                             for line in result.stdout.splitlines()
                         )
-                        >= 3
-                        for name in self.names
+                        >= self.count
+                        for source in sources
                     ):
                         break
                     time.sleep(0.5)
                 else:
                     raise RuntimeError(
-                        "NetChaos did not confirm all three CDN rules for every player pod"
+                        "NetChaos did not confirm all CDN-to-player rules"
                     )
             for name in self.names:
                 with socket.socket() as sock:
@@ -251,19 +255,19 @@ class DashClients:
             raise
 
     def __exit__(self, *_):
+        cleanup_error = None
         if self.fault_applied:
-            subprocess.run(
-                [
-                    "kubectl",
-                    "--context",
-                    "kind-kind",
-                    "delete",
-                    "-f",
-                    str(self.fault_manifest),
-                    "--wait=false",
-                ],
-                check=False,
-            )
+            try:
+                subprocess.run(
+                    [
+                        "kubectl", "--context", "kind-kind", "delete", "-f",
+                        str(self.fault_manifest), "--ignore-not-found", "--wait=true",
+                        "--timeout=90s",
+                    ],
+                    check=True,
+                )
+            except subprocess.CalledProcessError as error:
+                cleanup_error = error
         for process, log in self.forwards:
             process.terminate()
             try:
@@ -271,7 +275,7 @@ class DashClients:
             except subprocess.TimeoutExpired:
                 process.kill()
             log.close()
-        if self.names:
+        if self.names and not cleanup_error:
             subprocess.run(
                 [
                     "kubectl",
@@ -285,6 +289,8 @@ class DashClients:
                 ],
                 check=False,
             )
+        if cleanup_error:
+            raise RuntimeError("NetChaos fault cleanup did not finish") from cleanup_error
 
 
 def positive(value):
@@ -643,6 +649,8 @@ def observe(playwright, args, strategy, output, warmup=None):
                 query.update(
                     attack_cdn=args.malicious_cdn, attack_reward=args.attack_reward
                 )
+                if args.attack_delay:
+                    query["attack_enabled"] = "false"
             sid = start_player(page, query)
             if role == "modified":
                 modified[client]["sid"] = sid
@@ -651,12 +659,19 @@ def observe(playwright, args, strategy, output, warmup=None):
             if index + 1 < args.clients and args.stagger:
                 page.wait_for_timeout(args.stagger * 1000)
 
-        # Duration starts once all clients are playing; earlier clients also play
-        # during startup. Never loop/reset players automatically: it creates sids.
+        # The run duration starts when all players are active. Attack delay
+        # postpones only false telemetry; metrics cover the full run.
         observation_start = round(time.monotonic() - started, 3)
         viewer_initial = [viewer_snapshot(page) for page in pages]
-        deadline = time.monotonic() + args.seconds
+        run_start = time.monotonic()
+        deadline = run_start + args.seconds
+        attack_at = run_start + args.attack_delay if args.attack_delay else None
         while True:
+            if attack_at is not None and time.monotonic() >= attack_at:
+                for client, player in modified.items():
+                    player["page"].evaluate("window.__cmcdLieEnabled = true")
+                    record("attack_enabled", client)
+                attack_at = None
             state = read_state(args.telemetry_base, run_id, args.timeout)
             clients = [
                 page.evaluate("""() => {
@@ -691,7 +706,10 @@ def observe(playwright, args, strategy, output, warmup=None):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
-            pages[0].wait_for_timeout(min(args.interval, remaining) * 1000)
+            wait = min(args.interval, remaining)
+            if attack_at is not None:
+                wait = min(wait, max(0, attack_at - time.monotonic()))
+            pages[0].wait_for_timeout(wait * 1000)
 
         feedback = sum(int(model.get("n", 0)) for model in state["model"].values())
         state = read_state(args.telemetry_base, run_id, args.timeout)
@@ -727,7 +745,7 @@ def observe(playwright, args, strategy, output, warmup=None):
             problems.append("No accepted learning feedback")
         if unexpected_misses:
             problems.append(
-                f"{len(unexpected_misses)} warmed browser media requests were not cache HITs"
+                f"{len(unexpected_misses)} browser media requests were not cache HITs"
             )
         if gateway_requests:
             problems.append(
@@ -875,6 +893,12 @@ def main():
         help="Total players, including modified players",
     )
     parser.add_argument("--seconds", type=positive, default=60)
+    parser.add_argument(
+        "--attack-delay",
+        type=float,
+        default=0,
+        help="Seconds from the start of an attack run until false telemetry begins",
+    )
     parser.add_argument("--interval", type=positive, default=5)
     parser.add_argument(
         "--stagger", type=float, default=1, help="Seconds between client starts"
@@ -933,6 +957,8 @@ def main():
         parser.error(
             "clients/workers must be positive and stagger finite and nonnegative"
         )
+    if not 0 <= args.attack_delay < args.seconds:
+        parser.error("attack-delay must be nonnegative and shorter than seconds")
     if not 0 <= args.malicious_count < args.clients or args.replicate < 1:
         parser.error(
             "malicious-count must leave at least one honest player; replicate must be positive"
@@ -945,6 +971,8 @@ def main():
         )
     if not args.malicious_count and args.attack_reward is not None:
         parser.error("attack-reward requires malicious-count")
+    if not args.malicious_count and args.attack_delay:
+        parser.error("attack-delay requires malicious-count")
     if args.fault_manifest and not args.fault_manifest.is_file():
         parser.error("--fault-manifest must point to a file")
     args.fault_sha256 = (

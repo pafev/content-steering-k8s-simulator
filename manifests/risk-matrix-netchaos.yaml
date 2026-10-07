@@ -1,3 +1,5 @@
+# Shape CDN egress to player PodIPs (the media response direction).
+# These are initial one-way delays; validate browser TTLB and reward order in a control.
 apiVersion: net-chaos-simulator.pafev.dev/v1
 kind: NetworkChaos
 metadata:
@@ -5,12 +7,12 @@ metadata:
   namespace: default
 spec:
   sourceSelector:
+    name: cdn-1-edge-1
+  targetPodSelector:
     labels:
       matchLabels:
         app: dash-client
-  targetServiceSelector:
-    name: cdn-1
-  delay: 50ms
+  delay: 4ms
 ---
 apiVersion: net-chaos-simulator.pafev.dev/v1
 kind: NetworkChaos
@@ -19,12 +21,12 @@ metadata:
   namespace: default
 spec:
   sourceSelector:
+    name: cdn-2-edge-1
+  targetPodSelector:
     labels:
       matchLabels:
         app: dash-client
-  targetServiceSelector:
-    name: cdn-2
-  delay: 112ms
+  delay: 12ms
 ---
 apiVersion: net-chaos-simulator.pafev.dev/v1
 kind: NetworkChaos
@@ -33,9 +35,9 @@ metadata:
   namespace: default
 spec:
   sourceSelector:
+    name: cdn-3-edge-1
+  targetPodSelector:
     labels:
       matchLabels:
         app: dash-client
-  targetServiceSelector:
-    name: cdn-3
-  delay: 84ms
+  delay: 9ms
