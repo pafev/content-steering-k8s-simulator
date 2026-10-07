@@ -8,12 +8,15 @@ let session;
 let decisionId = null;
 let registrationPending = false;
 const pathways = ["cdn-1", "cdn-2", "cdn-3"];
-const telemetryBase = "http://telemetry-service.default.svc.cluster.local:30600";
+const telemetryBase =
+  "http://telemetry-service.default.svc.cluster.local:30600";
 const steeringHost = "steering-server.default.svc.cluster.local";
 
 byId("run-id").value = query.get("run_id") || newId();
 byId("strategy").value = query.get("strategy") || "ucb1";
-byId("manifest").value = query.get("mpd") || "https://cdn-1.default.svc.cluster.local/Eldorado/4sec/avc/manifest.mpd";
+byId("manifest").value =
+  query.get("mpd") ||
+  "https://cdn-1.default.svc.cluster.local/Eldorado/4sec/avc/manifest.mpd";
 
 async function registerSession() {
   if (!session || registrationPending) return;
@@ -37,10 +40,13 @@ async function registerSession() {
 function setLinks() {
   const url = new URL(location.href);
   url.search = new URLSearchParams({
-    run_id: session.run_id, strategy: session.strategy, mpd: session.cid,
+    run_id: session.run_id,
+    strategy: session.strategy,
+    mpd: session.cid,
   });
   byId("share-link").href = url;
-  byId("state-link").href = telemetryBase + "/v1/state/" + encodeURIComponent(session.run_id);
+  byId("state-link").href =
+    telemetryBase + "/v1/state/" + encodeURIComponent(session.run_id);
   history.replaceState(null, "", url);
 }
 
@@ -64,7 +70,8 @@ async function load(event) {
   try {
     await registerSession();
   } catch (error) {
-    byId("status").textContent = error.message + ". Playback has not started; retry Load video.";
+    byId("status").textContent =
+      error.message + ". Playback has not started; retry Load video.";
     return;
   }
   player = dashjs.MediaPlayer().create();
@@ -73,60 +80,107 @@ async function load(event) {
     if (url.hostname === steeringHost && url.pathname === "/manifest.json") {
       url.searchParams.set("run_id", session.run_id);
       url.searchParams.set("sid", session.sid);
-    } else if (/^cdn-[123]\.default\.svc\.cluster\.local$/.test(url.hostname) && decisionId) {
+    } else if (
+      /^cdn-[123]\.default\.svc\.cluster\.local$/.test(url.hostname) &&
+      decisionId
+    ) {
       // Kept out of the CDN cache key. CMCD rr includes the actual request URL.
       url.searchParams.set("cs_decision", decisionId);
     }
     request.url = url.href;
     return Promise.resolve(request);
   });
-  player.on(dashjs.MediaPlayer.events.CONTENT_STEERING_REQUEST_COMPLETED, (e) => {
-    const data = e.currentSteeringResponseData;
-    if (!data) return;
-    byId("priority").textContent = (data.pathwayPriority || []).join(" → ");
-    const base = new URL(e.url || "http://" + steeringHost + ":30500/manifest.json");
-    const reload = new URL(data.reloadUri || "/manifest.json", base);
-    decisionId = reload.searchParams.get("decision_id");
-  });
+  player.on(
+    dashjs.MediaPlayer.events.CONTENT_STEERING_REQUEST_COMPLETED,
+    (e) => {
+      const data = e.currentSteeringResponseData;
+      if (!data) return;
+      byId("priority").textContent = (data.pathwayPriority || []).join(" → ");
+      const base = new URL(
+        e.url || "http://" + steeringHost + ":30500/manifest.json",
+      );
+      const reload = new URL(data.reloadUri || "/manifest.json", base);
+      decisionId = reload.searchParams.get("decision_id");
+    },
+  );
   player.on(dashjs.MediaPlayer.events.FRAGMENT_LOADING_STARTED, (e) => {
     if (e.request?.serviceLocation) {
       byId("active-pathway").textContent = e.request.serviceLocation;
     }
   });
   player.on(dashjs.MediaPlayer.events.ERROR, (e) => {
-    byId("status").textContent = "Player: " + (e.error?.message || JSON.stringify(e.error));
+    byId("status").textContent =
+      "Player: " + (e.error?.message || JSON.stringify(e.error));
   });
   player.initialize(document.querySelector("video"), null, false);
   player.updateSettings({
     streaming: {
       cmcd: {
-        enabled: true, applyParametersFromMpd: false,
-        version: 2, mode: "header", sid: session.sid, cid: contentId,
+        enabled: true,
+        applyParametersFromMpd: false,
+        version: 2,
+        mode: "header",
+        sid: session.sid,
+        cid: contentId,
         includeInRequests: ["segment", "mpd"],
-        enabledKeys: ["v", "sid", "cid", "ot", "br", "d", "mtp", "bl", "bs", "su"],
+        enabledKeys: [
+          "v",
+          "sid",
+          "cid",
+          "ot",
+          "br",
+          "d",
+          "mtp",
+          "bl",
+          "bs",
+          "su",
+        ],
         eventTargets: [
           {
-            enabled: true, url: telemetryBase + "/v1/cmcd/events",
-            events: ["rr"], includeInRequests: ["segment"], batchSize: 1,
-            enabledKeys: ["v", "sid", "cid", "e", "ts", "sn", "url", "ot", "rc", "ttfb", "ttlb", "d", "bl"],
+            enabled: true,
+            url: telemetryBase + "/v1/cmcd/events",
+            events: ["rr"],
+            includeInRequests: ["segment"],
+            batchSize: 1,
+            enabledKeys: [
+              "v",
+              "sid",
+              "cid",
+              "e",
+              "ts",
+              "sn",
+              "url",
+              "ot",
+              "rc",
+              "ttfb",
+              "ttlb",
+              "d",
+              "bl",
+            ],
           },
           {
-            enabled: true, url: telemetryBase + "/v1/cmcd/events",
-            events: ["e"], batchSize: 1,
+            enabled: true,
+            url: telemetryBase + "/v1/cmcd/events",
+            events: ["e"],
+            batchSize: 1,
             enabledKeys: ["v", "sid", "cid", "e", "ts", "sn", "sta", "ec"],
           },
         ],
       },
+      abr: { maxBitrate: { video: 5800 } },
     },
   });
   player.attachSource(session.cid);
-  byId("status").textContent = "Video loaded. Press play; telemetry is shared with this run.";
+  byId("status").textContent =
+    "Video loaded. Press play; telemetry is shared with this run.";
 }
 
 async function refreshState() {
   if (!session) return;
   try {
-    const response = await fetch(byId("state-link").href, { signal: AbortSignal.timeout(4000) });
+    const response = await fetch(byId("state-link").href, {
+      signal: AbortSignal.timeout(4000),
+    });
     if (!response.ok) throw new Error("Telemetry unavailable");
     const state = await response.json();
     const rows = pathways.map((pathway) => {
@@ -134,8 +188,13 @@ async function refreshState() {
       const model = state.model[pathway] || {};
       const n = Number(model.n || 0);
       const row = document.createElement("tr");
-      [pathway, cdn.request_count || 0, cdn.cache_hit_count || 0, n,
-        n ? (Number(model.reward_sum) / n).toFixed(3) : "—"].forEach((value) => {
+      [
+        pathway,
+        cdn.request_count || 0,
+        cdn.cache_hit_count || 0,
+        n,
+        n ? (Number(model.reward_sum) / n).toFixed(3) : "—",
+      ].forEach((value) => {
         const cell = document.createElement("td");
         cell.textContent = value;
         row.appendChild(cell);
@@ -149,6 +208,10 @@ async function refreshState() {
 }
 byId("playback-form").addEventListener("submit", load);
 setInterval(refreshState, 5000);
-setInterval(() => registerSession().catch((error) => {
-  byId("status").textContent = "Telemetry registration: " + error.message;
-}), 30000);
+setInterval(
+  () =>
+    registerSession().catch((error) => {
+      byId("status").textContent = "Telemetry registration: " + error.message;
+    }),
+  30000,
+);
