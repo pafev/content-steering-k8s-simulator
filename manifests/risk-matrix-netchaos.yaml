@@ -1,0 +1,41 @@
+apiVersion: net-chaos-simulator.pafev.dev/v1
+kind: NetworkChaos
+metadata:
+  name: content-steering-cdn1-delay
+  namespace: default
+spec:
+  sourceSelector:
+    labels:
+      matchLabels:
+        app: dash-client
+  targetServiceSelector:
+    name: cdn-1
+  delay: 50ms
+---
+apiVersion: net-chaos-simulator.pafev.dev/v1
+kind: NetworkChaos
+metadata:
+  name: content-steering-cdn2-delay
+  namespace: default
+spec:
+  sourceSelector:
+    labels:
+      matchLabels:
+        app: dash-client
+  targetServiceSelector:
+    name: cdn-2
+  delay: 112ms
+---
+apiVersion: net-chaos-simulator.pafev.dev/v1
+kind: NetworkChaos
+metadata:
+  name: content-steering-cdn3-delay
+  namespace: default
+spec:
+  sourceSelector:
+    labels:
+      matchLabels:
+        app: dash-client
+  targetServiceSelector:
+    name: cdn-3
+  delay: 84ms
