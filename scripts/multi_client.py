@@ -647,10 +647,10 @@ def observe(playwright, args, strategy, output, warmup=None):
             query = {"run_id": run_id, "strategy": strategy, "mpd": args.mpd}
             if role == "modified":
                 query.update(
-                    attack_cdn=args.malicious_cdn, attack_reward=args.attack_reward
+                    attack_cdn=args.malicious_cdn,
+                    attack_reward=args.attack_reward,
+                    attack_enabled="false",
                 )
-                if args.attack_delay:
-                    query["attack_enabled"] = "false"
             sid = start_player(page, query)
             if role == "modified":
                 modified[client]["sid"] = sid
@@ -659,14 +659,18 @@ def observe(playwright, args, strategy, output, warmup=None):
             if index + 1 < args.clients and args.stagger:
                 page.wait_for_timeout(args.stagger * 1000)
 
-        # The run duration starts when all players are active. Attack delay
-        # postpones only false telemetry; metrics cover the full run.
-        observation_start = round(time.monotonic() - started, 3)
-        viewer_initial = [viewer_snapshot(page) for page in pages]
+        # Both runs measure the same interval after all players become active.
         run_start = time.monotonic()
         deadline = run_start + args.seconds
-        attack_at = run_start + args.attack_delay if args.attack_delay else None
+        measurement_at = run_start + args.measurement_start
+        attack_at = run_start + args.attack_delay if modified else None
+        observation_start = None
+        viewer_initial = None
         while True:
+            if measurement_at is not None and time.monotonic() >= measurement_at:
+                viewer_initial = [viewer_snapshot(page) for page in pages]
+                observation_start = round(time.monotonic() - started, 3)
+                measurement_at = None
             if attack_at is not None and time.monotonic() >= attack_at:
                 for client, player in modified.items():
                     player["page"].evaluate("window.__cmcdLieEnabled = true")
@@ -707,6 +711,8 @@ def observe(playwright, args, strategy, output, warmup=None):
             if remaining <= 0:
                 break
             wait = min(args.interval, remaining)
+            if measurement_at is not None:
+                wait = min(wait, max(0, measurement_at - time.monotonic()))
             if attack_at is not None:
                 wait = min(wait, max(0, attack_at - time.monotonic()))
             pages[0].wait_for_timeout(wait * 1000)
@@ -899,6 +905,12 @@ def main():
         default=0,
         help="Seconds from the start of an attack run until false telemetry begins",
     )
+    parser.add_argument(
+        "--measurement-start",
+        type=float,
+        default=0,
+        help="Seconds from the start of any run until metrics begin",
+    )
     parser.add_argument("--interval", type=positive, default=5)
     parser.add_argument(
         "--stagger", type=float, default=1, help="Seconds between client starts"
@@ -959,6 +971,8 @@ def main():
         )
     if not 0 <= args.attack_delay < args.seconds:
         parser.error("attack-delay must be nonnegative and shorter than seconds")
+    if not 0 <= args.measurement_start < args.seconds:
+        parser.error("measurement-start must be nonnegative and shorter than seconds")
     if not 0 <= args.malicious_count < args.clients or args.replicate < 1:
         parser.error(
             "malicious-count must leave at least one honest player; replicate must be positive"

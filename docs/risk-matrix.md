@@ -41,9 +41,8 @@ In one 10-player, 40+80-second pilot with the 1080p default, CDN-egress
 CDN-1/2/3. Learned mean rewards were 0.9883/0.9745/0.9804, preserving
 CDN-1 > CDN-3 > CDN-2. Treat this as a local calibration, not a CDN-wide
 latency estimate; repeat controls before the full matrix.
-The earlier M=1, r=0.5 pilot used an 80-second observation window after
-40 seconds of training; its D metrics are not comparable with new 120-second
-full-run metrics.
+The earlier M=1, r=0.5 pilot also used an 80-second observation window after
+40 seconds of training, but it predates the current named-source manifest.
 
 Run a clean control and inspect `calibration.json`: it reports accepted video
 samples, median/p90 browser `ttlb`, and mean learning reward per CDN. Check the
@@ -71,7 +70,7 @@ running the pilot attack cell M=1, r=0.5:
 
 ```sh
 .venv/bin/python scripts/multi_client.py --strategy ucb1 --clients 10 \
-  --seconds 120 --replicate 1 \
+  --seconds 120 --measurement-start 40 --replicate 1 \
   --fault-manifest manifests/risk-matrix-netchaos.yaml \
   --output results/risk-matrix-manual-delays
 .venv/bin/python scripts/plot_risk_matrix.py results/risk-matrix-manual-delays --strategy ucb1
@@ -82,7 +81,7 @@ continuing. Repeat controls before treating a small reward gap as stable.
 
 ```sh
 .venv/bin/python scripts/multi_client.py --strategy ucb1 --clients 10 \
-  --seconds 120 --attack-delay 40 --replicate 1 \
+  --seconds 120 --measurement-start 40 --attack-delay 40 --replicate 1 \
   --malicious-count 1 --attack-reward 0.5 \
   --fault-manifest manifests/risk-matrix-netchaos.yaml \
   --skip-warmup --output results/risk-matrix-manual-delays
@@ -93,16 +92,18 @@ The plotter writes `D_steer.png`, `D_viewer.png`, `metrics.json`, and
 `calibration.json` under `results/risk-matrix-manual-delays/plots/ucb1/`. Gray
 cells have not run. Check each run's `summary.json` for `success`, `problems`,
 cache hits, and `accepted_falsified` before interpreting a pair. The attack
-starts after 40 seconds of clean learning. Both metrics use the full
-120 seconds in the attack and control, so the clean first 40 seconds dilute
-the measured effect. `--skip-warmup` disables cache validation; cache
+starts after 40 seconds of clean learning. Both runs measure only seconds
+40–120 through `--measurement-start 40`; `--attack-delay 40` separately
+enables false telemetry. Set `--measurement-start 0` on both runs to measure
+the full duration while still delaying the attack.
+`--skip-warmup` disables cache validation; cache
 status remains in `events.jsonl` for inspection.
 
 ## Metrics
 
 For each honest player, `P` is the fraction of observed CSS steering responses
 whose first priority is CDN-2 or CDN-3. The run's `P` is the mean of those
-player fractions. Use steering responses from the full run.
+player fractions. Use steering responses from seconds 40–120 in both runs.
 
 `D_steer = P_attack − P_control` for the **same honest slots** M+1–10.
 Positive values mean the modified reports shifted honest players toward the
@@ -110,7 +111,7 @@ two delayed CDNs. This measures CSS decisions, not necessarily the segment
 path ultimately used after fallback.
 
 For each honest player, `B = rebuffer_seconds / (played_seconds +
-rebuffer_seconds)` during the observation period. `D_viewer = mean(B_attack)
+rebuffer_seconds)` during seconds 40–120. `D_viewer = mean(B_attack)
 − mean(B_control)` over the same slots. Positive values mean more buffering.
 Startup time is recorded in `summary.json` but is outside this metric. A
 zero `D_viewer` is possible even when steering changes because the player may
@@ -141,7 +142,8 @@ for count in 1 2 3 4 5 6; do
   for reward in 0.9 0.8 0.7 0.6 0.5 0.4; do
     if [ "$count" = 1 ] && [ "$reward" = 0.5 ]; then continue; fi
     .venv/bin/python scripts/multi_client.py --strategy ucb1 --clients 10 \
-      --seconds 120 --attack-delay 40 --replicate 1 --malicious-count "$count" \
+      --seconds 120 --measurement-start 40 --attack-delay 40 \
+      --replicate 1 --malicious-count "$count" \
       --attack-reward "$reward" --skip-warmup \
       --fault-manifest manifests/risk-matrix-netchaos.yaml \
       --output results/risk-matrix-manual-delays
@@ -152,8 +154,8 @@ done
 
 For independent replicates, use another `--replicate` number and include one
 new clean control with that number. Use one output root for one fault setup;
-the plotter pairs by strategy and replicate and rejects duplicate controls or
-a changed fault manifest. Repeat cells with
+the plotter pairs by strategy and replicate and rejects duplicate controls,
+a changed fault manifest, or different measurement cutoffs. Repeat cells with
 multiple replicates before estimating a risk boundary.
 
 The runner waits for NetChaos finalizer cleanup before removing dash-client

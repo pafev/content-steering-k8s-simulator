@@ -150,6 +150,8 @@ def main():
             or control["summary"]["configuration"].get("fault_sha256")
             != config.get("fault_sha256")
             or control["summary"]["configuration"]["seconds"] != config["seconds"]
+            or control["summary"]["configuration"].get("measurement_start", 0)
+            != config.get("measurement_start", 0)
         ):
             raise ValueError(f"Control and attack conditions differ: {attack['path']}")
         clients = range(count + 1, 11)
