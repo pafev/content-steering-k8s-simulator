@@ -30,7 +30,13 @@ def read_run(path):
 
 
 def steering_probability(run, clients):
-    start = run["summary"]["observation_start"]
+    summary = run["summary"]
+    start = summary["observation_start"]
+    config = summary["configuration"]
+    end = summary.get(
+        "observation_end",
+        start + config["seconds"] - config.get("measurement_start", 0),
+    )
     values = []
     for client in clients:
         priorities = [
@@ -39,7 +45,7 @@ def steering_probability(run, clients):
             if event["kind"] == "steering"
             and event.get("status") == 200
             and event["client"] == client
-            and event["elapsed"] >= start
+            and start <= event["elapsed"] < end
             and event.get("response", {}).get("PATHWAY-PRIORITY")
         ]
         if not priorities:

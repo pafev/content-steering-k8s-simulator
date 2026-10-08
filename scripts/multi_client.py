@@ -260,8 +260,14 @@ class DashClients:
             try:
                 subprocess.run(
                     [
-                        "kubectl", "--context", "kind-kind", "delete", "-f",
-                        str(self.fault_manifest), "--ignore-not-found", "--wait=true",
+                        "kubectl",
+                        "--context",
+                        "kind-kind",
+                        "delete",
+                        "-f",
+                        str(self.fault_manifest),
+                        "--ignore-not-found",
+                        "--wait=true",
                         "--timeout=90s",
                     ],
                     check=True,
@@ -290,7 +296,9 @@ class DashClients:
                 check=False,
             )
         if cleanup_error:
-            raise RuntimeError("NetChaos fault cleanup did not finish") from cleanup_error
+            raise RuntimeError(
+                "NetChaos fault cleanup did not finish"
+            ) from cleanup_error
 
 
 def positive(value):
@@ -644,7 +652,11 @@ def observe(playwright, args, strategy, output, warmup=None):
                     {"client": c, "error": str(error)}
                 ),
             )
-            query = {"run_id": run_id, "strategy": strategy, "mpd": args.mpd}
+            query = {
+                "run_id": run_id,
+                "strategy": strategy,
+                "mpd": args.mpd,
+            }
             if role == "modified":
                 query.update(
                     attack_cdn=args.malicious_cdn,
@@ -662,6 +674,7 @@ def observe(playwright, args, strategy, output, warmup=None):
         # Both runs measure the same interval after all players become active.
         run_start = time.monotonic()
         deadline = run_start + args.seconds
+        observation_end = round(deadline - started, 3)
         measurement_at = run_start + args.measurement_start
         attack_at = run_start + args.attack_delay if modified else None
         observation_start = None
@@ -854,6 +867,7 @@ def observe(playwright, args, strategy, output, warmup=None):
                 if k not in ("player_endpoints", "telemetry_base")
             },
             "observation_start": observation_start,
+            "observation_end": observation_end,
             "delivery_calibration": delivery_calibration,
             "viewers": viewers,
             "final": {**sample, "state": state},
