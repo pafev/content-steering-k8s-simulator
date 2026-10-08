@@ -11,7 +11,7 @@ fallback.
 
 Each correlated CMCD `e=rr`, `ot=v` report trains the CDN in the reported media
 URL once. A successful 2xx video response receives the bounded reward
-`d / (d + ttlb)`, with both values in milliseconds. Reported `rc=0` and HTTP
+`d / (d + 5 × ttlb)`, with both values in milliseconds. Reported `rc=0` and HTTP
 4xx/5xx receive zero. A successful fallback response credits the CDN that
 served it. Missing, invalid, or uncorrelated reports do not train. A delayed
 report can train while its session and decision still exist.

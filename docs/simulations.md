@@ -61,7 +61,7 @@ honest players and one modified dash.js player (six total):
 
 The modified player follows CSS decisions and downloads real media. For
 successful CDN-1 video responses, it changes `ttlb` so that the reported
-delivery reward `d/(d+ttlb)` is about 0.5.
+delivery reward `d/(d+5×ttlb)` is about 0.5.
 
 The run's `modified-players.json` records original and claimed timing,
 matching responses, and telemetry ingestion results. The role label is used

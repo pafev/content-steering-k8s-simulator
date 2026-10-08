@@ -4,8 +4,8 @@ This experiment uses the fixed count of 10 real dash.js players per run.
 Modified players vary throughout the experiment and replace honest players.
 A modified player downloads genuine segments and changes only its CMCD `ttlb` for
 successful CDN-1 video responses. For a requested claimed reward `r`, it
-reports `ttlb = round(d × (1/r − 1))`, where `d` is that segment's reported duration
-in milliseconds. The CSS still uses its existing reward `d/(d+ttlb)`.
+reports `ttlb = round(d × (1/r − 1) / 5)`, where `d` is that segment's reported duration
+in milliseconds. The CSS uses the reward `d/(d+5×ttlb)`.
 
 ## Network delays and calibration
 
@@ -13,36 +13,7 @@ The [fault manifest](../manifests/risk-matrix-netchaos.yaml) applies initial
 4, 12, and 9 ms delays to packets leaving CDN-1, CDN-2, and CDN-3 for the
 player PodIPs. This shapes the media response direction.
 The ordering is based on one hour of IPv4 ICMP measurements from
-[RIPE Atlas probe 24628](https://atlas.ripe.net/api/v2/probes/24628/) on a
-São Paulo Vivo connection (2026-10-06 02:00–03:00 UTC). Median averages over
-15 ping rounds were 3.841 ms to
-[Fastly](https://atlas.ripe.net/api/v2/measurements/177401244/results/?probe_ids=24628&start=1791252000&stop=1791255600),
-4.550 ms to
-[Cloudflare](https://atlas.ripe.net/api/v2/measurements/176906978/results/?probe_ids=24628&start=1791252000&stop=1791255600),
-and 5.161 ms to
-[Amazon](https://atlas.ripe.net/api/v2/measurements/177401165/results/?probe_ids=24628&start=1791252000&stop=1791255600).
-The simulator CDNs are anonymous; these measurements justify only the rank,
-not an identity or a measured segment download time for any simulated CDN.
-
-Browser `ttlb` includes the full HTTPS media transfer, so it can be much
-larger than one configured one-way delay. The
-[netem manual](https://man7.org/linux/man-pages/man8/tc-netem.8.html) also
-warns that queue placement matters for realistic TCP performance. A 10-player
-control with the former 50/112/84 ms
-settings measured median video `ttlb` of 416/915/691 ms. Two 10-player
-controls with 4/12/9 ms on player egress measured 55/113/97 ms and
-51.5/115/90.5 ms. One of those two controls had a long CDN-3 download tail
-and did not preserve the CDN-3 > CDN-2 mean-reward order. These are historical
-measurements for the earlier player-egress profile. The new
-CDN-egress profile must be recalibrated with a clean control before any attack
-pair is interpreted. Check its browser `ttlb`, tail, and learned reward order.
-In one 10-player, 40+80-second pilot with the 1080p default, CDN-egress
-4/12/9 ms produced median browser video `ttlb` of 47/108.5/83 ms for
-CDN-1/2/3. Learned mean rewards were 0.9883/0.9745/0.9804, preserving
-CDN-1 > CDN-3 > CDN-2. Treat this as a local calibration, not a CDN-wide
-latency estimate; repeat controls before the full matrix.
-The earlier M=1, r=0.5 pilot also used an 80-second observation window after
-40 seconds of training, but it predates the current named-source manifest.
+[RIPE Atlas probe 24628](https://atlas.ripe.net/api/v2/probes/24628/).
 
 Run a clean control and inspect `calibration.json`: it reports accepted video
 samples, median/p90 browser `ttlb`, and mean learning reward per CDN. Check the
@@ -59,8 +30,7 @@ of each run. Check `kubectl --context kind-kind get networkchaos` while a run
 is active. Run one experiment at a time: the fault manifest selects all
 `dash-client` pods as targets and names `cdn-1-edge-1`, `cdn-2-edge-1`, and
 `cdn-3-edge-1` as sources. Update the manifest if the CDN pods are renamed.
-The player pods
-also have a `steering-client-index` label (1–10) for later client-specific faults.
+The player pods also have a `steering-client-index` label (1–10) for later client-specific faults.
 
 Run one clean control and one attack with the same strategy, replicate, video,
 10 players and fault setup. The first run warms
@@ -72,11 +42,11 @@ running the pilot attack cell M=1, r=0.5:
 .venv/bin/python scripts/multi_client.py --strategy ucb1 --clients 10 \
   --seconds 120 --measurement-start 40 --replicate 1 \
   --fault-manifest manifests/risk-matrix-netchaos.yaml \
-  --output results/risk-matrix-manual-delays
-.venv/bin/python scripts/plot_risk_matrix.py results/risk-matrix-manual-delays --strategy ucb1
+  --output results/risk-matrix
+.venv/bin/python scripts/plot_risk_matrix.py results/risk-matrix --strategy ucb1
 ```
 
-Check `results/risk-matrix-manual-delays/plots/ucb1/calibration.json` before
+Check `results/risk-matrix-ttlb5-720p/plots/ucb1/calibration.json` before
 continuing. Repeat controls before treating a small reward gap as stable.
 
 ```sh
@@ -84,12 +54,12 @@ continuing. Repeat controls before treating a small reward gap as stable.
   --seconds 120 --measurement-start 40 --attack-delay 40 --replicate 1 \
   --malicious-count 1 --attack-reward 0.5 \
   --fault-manifest manifests/risk-matrix-netchaos.yaml \
-  --skip-warmup --output results/risk-matrix-manual-delays
-.venv/bin/python scripts/plot_risk_matrix.py results/risk-matrix-manual-delays --strategy ucb1
+  --skip-warmup --output results/risk-matrix
+.venv/bin/python scripts/plot_risk_matrix.py results/risk-matrix --strategy ucb1
 ```
 
 The plotter writes `D_steer.png`, `D_viewer.png`, `metrics.json`, and
-`calibration.json` under `results/risk-matrix-manual-delays/plots/ucb1/`. Gray
+`calibration.json` under `results/risk-matrix/plots/ucb1/`. Gray
 cells have not run. Check each run's `summary.json` for `success`, `problems`,
 cache hits, and `accepted_falsified` before interpreting a pair. The attack
 starts after 40 seconds of clean learning. Both runs measure only seconds
@@ -146,10 +116,10 @@ for count in 1 2 3 4 5 6; do
       --replicate 1 --malicious-count "$count" \
       --attack-reward "$reward" --skip-warmup \
       --fault-manifest manifests/risk-matrix-netchaos.yaml \
-      --output results/risk-matrix-manual-delays
+      --output results/risk-matrix
   done
 done
-.venv/bin/python scripts/plot_risk_matrix.py results/risk-matrix-manual-delays --strategy ucb1
+.venv/bin/python scripts/plot_risk_matrix.py results/risk-matrix --strategy ucb1
 ```
 
 For independent replicates, use another `--replicate` number and include one
