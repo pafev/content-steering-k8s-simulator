@@ -49,13 +49,13 @@
           ) {
             return line;
           }
-          const claimed = Math.round(duration * (1 / targetReward - 1));
+          const claimed = Math.round(duration * (1 / targetReward - 1) / 5);
           window.__cmcdLieAudit.push({
             url,
             measured_ttlb_ms: Number(measured),
             claimed_ttlb_ms: claimed,
             media_duration_ms: duration,
-            claimed_reward: duration / (duration + claimed),
+            claimed_reward: duration / (duration + 5 * claimed),
             sn: Number(line.match(/(?:^|,)sn=(\d+)(?=,|$)/)?.[1]),
           });
           return line.replace(/(^|,)ttlb=\d+(?=,|$)/, `$1ttlb=${claimed}`);

@@ -121,7 +121,7 @@ def test_failure_gets_zero_and_successful_fallback_gets_own_reward(services, db)
     assert db.hget("run:run:model:cdn-1", "n") == "2"
     assert float(db.hget("run:run:model:cdn-1", "reward_sum")) == 0
     assert db.hget("run:run:model:cdn-2", "n") == "1"
-    assert float(db.hget("run:run:model:cdn-2", "reward_sum")) == pytest.approx(4000/4100)
+    assert float(db.hget("run:run:model:cdn-2", "reward_sum")) == pytest.approx(4000/4500)
 
 
 def test_success_needs_duration_and_non_video_does_not_train(services):
@@ -150,7 +150,7 @@ def test_delayed_and_later_responses_still_train(services, db):
     later = report(token, pathway="cdn-2", duration=8000, sequence=1)
     assert store.record_cmcd_event(later) == "learned"
     assert store.record_cmcd_event(later) == "already_observed"
-    assert float(store.get_state("run")["model"]["cdn-2"]["reward_sum"]) == pytest.approx(1/3)
+    assert float(store.get_state("run")["model"]["cdn-2"]["reward_sum"]) == pytest.approx(1/11)
     assert store.get_state("run")["model"]["cdn-1"]["n"] == "1"
 
 

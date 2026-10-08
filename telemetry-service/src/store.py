@@ -45,7 +45,6 @@ class TelemetryStore:
         if strategy not in STRATEGIES or type(seed) is not int:
             raise ValueError("Unknown strategy or invalid seed")
         config = dict(strategy=strategy, seed=seed,
-                      reward_version="cmcd-delivery-duration-v1",
                       policy_version=1, epsilon=0.2, linucb_alpha=1.0,
                       ucb1_bonus="sqrt(2*ln(completed_observations)/arm_observations)")
         session_key, config_key = f"session:{sid}", f"run:{run_id}:config"
@@ -152,7 +151,7 @@ class TelemetryStore:
             media_duration = cmcd_value(event, "d", "v")
             if not number(duration) or not number(media_duration) or media_duration <= 0:
                 return "invalid_duration"
-            reward = media_duration / (media_duration + duration)
+            reward = media_duration / (media_duration + 5 * duration)
         else:
             reward = 0.0
         decision_id = parse_qs(urlsplit(url).query).get("cs_decision", [""])[0]
