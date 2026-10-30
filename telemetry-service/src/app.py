@@ -44,6 +44,7 @@ def register_session():
         store.register_session(
             data.get("run_id"), data.get("sid"), data.get("cid", ""),
             data.get("strategy", "ucb1"), data.get("seed", 1),
+            data.get("reward_lambda", 5.0),
         )
     except ValueError as error:
         return jsonify(error=str(error)), 400

@@ -39,12 +39,16 @@ class TelemetryStore:
     def ping(self):
         return bool(self.redis.ping())
 
-    def register_session(self, run_id, sid, cid="", strategy="ucb1", seed=1):
+    def register_session(self, run_id, sid, cid="", strategy="ucb1", seed=1,
+                         reward_lambda=5.0):
         if not all(isinstance(v, str) and IDENTIFIER.fullmatch(v) for v in (run_id, sid)):
             raise ValueError("run_id and sid must contain 1-128 letters, digits, '_' or '-'")
         if strategy not in STRATEGIES or type(seed) is not int:
             raise ValueError("Unknown strategy or invalid seed")
+        if not number(reward_lambda) or reward_lambda <= 0:
+            raise ValueError("reward_lambda must be finite and positive")
         config = dict(strategy=strategy, seed=seed,
+                      reward_lambda=float(reward_lambda),
                       policy_version=1, epsilon=0.2, linucb_alpha=1.0,
                       ucb1_bonus="sqrt(2*ln(completed_observations)/arm_observations)")
         session_key, config_key = f"session:{sid}", f"run:{run_id}:config"
@@ -151,7 +155,8 @@ class TelemetryStore:
             media_duration = cmcd_value(event, "d", "v")
             if not number(duration) or not number(media_duration) or media_duration <= 0:
                 return "invalid_duration"
-            reward = media_duration / (media_duration + 5 * duration)
+            config = json.loads(self.redis.get(f"run:{run_id}:config"))
+            reward = media_duration / (media_duration + config["reward_lambda"] * duration)
         else:
             reward = 0.0
         decision_id = parse_qs(urlsplit(url).query).get("cs_decision", [""])[0]
