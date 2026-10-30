@@ -729,7 +729,7 @@ def observe(playwright, args, strategy, output, warmup=None):
             if role == "modified":
                 query.update(
                     attack_cdn=args.malicious_cdn,
-                    attack_reward=args.attack_reward,
+                    attack_ttlb=args.attack_ttlb,
                     attack_enabled="false",
                 )
             sid = start_player(page, query)
@@ -887,7 +887,11 @@ def observe(playwright, args, strategy, output, warmup=None):
                         )
                     )
                 }
-                accepted = sum(item["sn"] in learned_sequences for item in audit)
+                accepted_rewards = [
+                    item["claimed_reward"] for item in audit
+                    if item["sn"] in learned_sequences
+                ]
+                accepted = len(accepted_rewards)
                 details.append(
                     dict(
                         client=client,
@@ -897,6 +901,7 @@ def observe(playwright, args, strategy, output, warmup=None):
                         feedback=player["feedback"],
                         matched_deliveries=matched,
                         accepted_falsified=accepted,
+                        accepted_claimed_rewards=accepted_rewards,
                     )
                 )
                 if matched != len(audit):
@@ -912,6 +917,10 @@ def observe(playwright, args, strategy, output, warmup=None):
                 altered_reports=sum(len(item["audit"]) for item in details),
                 matched_deliveries=sum(item["matched_deliveries"] for item in details),
                 accepted_falsified=sum(item["accepted_falsified"] for item in details),
+                mean_accepted_claimed_reward=statistics.mean(
+                    reward for item in details
+                    for reward in item["accepted_claimed_rewards"]
+                ) if any(item["accepted_claimed_rewards"] for item in details) else None,
             )
             if not malicious["accepted_falsified"]:
                 problems.append(
@@ -1044,9 +1053,8 @@ def main():
         "--malicious-cdn", choices=("cdn-1", "cdn-2", "cdn-3"), default="cdn-1"
     )
     parser.add_argument(
-        "--attack-reward",
-        type=float,
-        help="Reward the modified player claims for successful target-CDN video responses",
+        "--attack-ttlb", type=int,
+        help="Fixed TTLB in milliseconds declared for successful target-CDN video responses",
     )
     parser.add_argument(
         "--replicate",
@@ -1086,13 +1094,13 @@ def main():
             "malicious-count must leave at least one honest player; replicate must be positive"
         )
     if args.malicious_count and (
-        args.attack_reward is None or not 0 < args.attack_reward < 1
+        args.attack_ttlb is None or args.attack_ttlb <= 0
     ):
         parser.error(
-            "attack-reward must be between 0 and 1 when modified players are requested"
+            "attack-ttlb must be a positive integer when modified players are requested"
         )
-    if not args.malicious_count and args.attack_reward is not None:
-        parser.error("attack-reward requires malicious-count")
+    if not args.malicious_count and args.attack_ttlb is not None:
+        parser.error("attack-ttlb requires malicious-count")
     if not args.malicious_count and args.attack_delay:
         parser.error("attack-delay requires malicious-count")
     if args.fault_manifest and not args.fault_manifest.is_file():

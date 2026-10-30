@@ -10,7 +10,7 @@ fault=manifests/risk-matrix-netchaos.yaml
 has_run() {
   "$runner" - "$out" "$rep" "$lambda" "$1" "$2" "$3" <<'PY'
 import json, pathlib, sys
-root, rep, lam, kind, count, reward = sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), sys.argv[4], int(sys.argv[5]), sys.argv[6]
+root, rep, lam, kind, count, ttlb = sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), sys.argv[4], int(sys.argv[5]), int(sys.argv[6])
 matches = 0
 for path in pathlib.Path(root).glob('*/multi-*/summary.json'):
     try:
@@ -22,7 +22,7 @@ for path in pathlib.Path(root).glob('*/multi-*/summary.json'):
         and cfg.get('reward_lambda', 5) == lam
         and ((kind == 'control' and cfg['malicious_count'] == 0)
              or (kind == 'attack' and cfg['malicious_count'] == count
-                 and cfg['attack_reward'] == float(reward)))):
+                 and cfg.get('attack_ttlb') == ttlb))):
         matches += 1
 target = count if kind == 'control' else 1
 sys.exit(0 if matches >= target else 1)
@@ -59,23 +59,23 @@ for regime in low:1 medium:5 high:15; do
       "$runner" - "$rep" "$lambda" "$order" <<'PY'
 import pathlib, random, sys
 rep, lam, output = int(sys.argv[1]), int(sys.argv[2]), pathlib.Path(sys.argv[3])
-cells = [(m, r) for m in range(1, 7) for r in ("0.9", "0.8", "0.7", "0.6", "0.5", "0.4")]
+cells = [(m, ttlb) for m in range(1, 7) for ttlb in (90, 200, 340, 530, 800, 1200)]
 seed = 20261029 + 100 * lam + rep
 random.Random(seed).shuffle(cells)
-output.write_text("".join(f"{m} {r}\n" for m, r in cells))
+output.write_text("".join(f"{m} {ttlb}\n" for m, ttlb in cells))
 output.with_name(output.name.replace("order-", "seed-")).write_text(f"{seed}\n")
 PY
     fi
     completed=0
-    while read -r count reward; do
+    while read -r count ttlb; do
       # A fresh invocation starts a new run_id and waits for Kind to settle.
-      if ! has_run attack "$count" "$reward"; then
+      if ! has_run attack "$count" "$ttlb"; then
         warmup=()
         if ((completed > 0)); then warmup=(--skip-warmup); fi
         "$runner" scripts/multi_client.py --strategy ucb1 --clients 10 \
           --seconds 120 --measurement-start 40 --attack-delay 40 \
           --reward-lambda "$lambda" --replicate "$rep" \
-          --malicious-count "$count" --attack-reward "$reward" \
+          --malicious-count "$count" --attack-ttlb "$ttlb" \
           --fault-manifest "$fault" --output "$out" \
           "${warmup[@]}"
       fi

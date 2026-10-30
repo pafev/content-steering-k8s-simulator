@@ -12,7 +12,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-REWARDS = (0.9, 0.8, 0.7, 0.6, 0.5, 0.4)
+TTLB_VALUES_MS = (90, 200, 340, 530, 800, 1200)
 COUNTS = range(1, 7)
 PRICES_USD_PER_GB = {"cdn-1": 0.045, "cdn-2": 0.11, "cdn-3": 0.10}
 
@@ -99,50 +99,50 @@ def write_table(path, rows, columns):
         writer.writerows(rows)
 
 
-def plot(rows, field, label, output):
-    grid = np.full((len(COUNTS), len(REWARDS)), np.nan)
+def plot(rows, field, label, output, minimum_scale, decimals):
+    grid = np.full((len(COUNTS), len(TTLB_VALUES_MS)), np.nan)
     for count in COUNTS:
-        for index, reward in enumerate(REWARDS):
+        for index, ttlb in enumerate(TTLB_VALUES_MS):
             values = [
                 row[field]
                 for row in rows
-                if row["malicious_count"] == count and row["claimed_reward"] == reward
+                if row["malicious_count"] == count and row["claimed_ttlb_ms"] == ttlb
             ]
             if values:
                 grid[count - 1, index] = sum(values) / len(values)
-    fig, ax = plt.subplots(figsize=(9, 6), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(8.5, 5.7), constrained_layout=True)
     masked = np.ma.masked_invalid(grid)
     maximum = max(
-        0.05, float(np.nanmax(np.abs(grid))) if np.isfinite(grid).any() else 0.05
+        minimum_scale,
+        float(np.nanmax(np.abs(grid))) if np.isfinite(grid).any() else minimum_scale,
     )
     image = ax.imshow(masked, cmap="RdBu_r", vmin=-maximum, vmax=maximum, aspect="auto")
     image.cmap.set_bad("#eeeeee")
     ax.set(
-        xticks=range(len(REWARDS)),
-        xticklabels=[f"{v:.1f}" for v in REWARDS],
+        xticks=range(len(TTLB_VALUES_MS)),
+        xticklabels=[str(v) for v in TTLB_VALUES_MS],
         yticks=range(len(COUNTS)),
         yticklabels=list(COUNTS),
-        xlabel="Claimed reward for CDN-1 delivery",
-        ylabel="Modified players out of 10",
+        xlabel="Declared CDN-1 TTLB (ms)",
+        ylabel="Malicious players (of 10)",
         title=label,
     )
     for y, count in enumerate(COUNTS):
-        for x, reward in enumerate(REWARDS):
+        for x, ttlb in enumerate(TTLB_VALUES_MS):
             if np.isfinite(grid[y, x]):
-                trials = sum(
-                    row["malicious_count"] == count and row["claimed_reward"] == reward
-                    for row in rows
-                )
+                value = grid[y, x]
+                shown = "0." + "0" * decimals if abs(value) < 0.5 * 10 ** -decimals else f"{value:+.{decimals}f}"
                 ax.text(
                     x,
                     y,
-                    f"{grid[y, x]:+.3f}\n(n={trials})",
+                    shown,
                     ha="center",
                     va="center",
-                    fontsize=9,
+                    fontsize=8,
+                    color="white" if abs(value) > 0.65 * maximum else "#222222",
                 )
-    fig.colorbar(image, ax=ax, label="Attack − matched clean control")
-    fig.savefig(output, dpi=180)
+    fig.colorbar(image, ax=ax, label="Attack − control")
+    fig.savefig(output, dpi=180, bbox_inches="tight", pad_inches=0.15)
     plt.close(fig)
 
 
@@ -176,9 +176,9 @@ def main():
                        if run["summary"]["configuration"]["replicate"] == replicate
                        and run["summary"]["configuration"]["malicious_count"]]
             cells = {(run["summary"]["configuration"]["malicious_count"],
-                      round(run["summary"]["configuration"]["attack_reward"], 1))
+                      run["summary"]["configuration"]["attack_ttlb"])
                      for run in attacks}
-            expected = {(m, r) for m in COUNTS for r in REWARDS}
+            expected = {(m, ttlb) for m in COUNTS for ttlb in TTLB_VALUES_MS}
             if len(group) != 6 or cells != expected or len(attacks) != 36:
                 raise ValueError(f"Incomplete replicate {replicate}: "
                                  f"{len(group)} controls, {len(cells)} distinct cells, "
@@ -191,8 +191,8 @@ def main():
             continue
         if config["malicious_cdn"] != "cdn-1":
             raise ValueError(f"Risk matrix expects attacks on CDN-1: {attack['path']}")
-        reward = round(config["attack_reward"], 1)
-        if count not in COUNTS or reward not in REWARDS:
+        ttlb = config["attack_ttlb"]
+        if count not in COUNTS or ttlb not in TTLB_VALUES_MS:
             continue
         matched = controls.get(config["replicate"], [])
         if not matched:
@@ -233,7 +233,8 @@ def main():
                 strategy=args.strategy,
                 replicate=config["replicate"],
                 malicious_count=count,
-                claimed_reward=reward,
+                claimed_ttlb_ms=ttlb,
+                mean_accepted_claimed_reward=attack["summary"]["malicious"]["mean_accepted_claimed_reward"],
                 p_control=p_control,
                 p_attack=p_attack,
                 d_steer=p_attack - p_control,
@@ -250,7 +251,10 @@ def main():
                 g_12=means["cdn-1"] - means["cdn-2"],
                 g_13=means["cdn-1"] - means["cdn-3"],
                 honest_reward_gap=means["cdn-1"] - best_alternative,
-                claimed_reward_gap=reward - best_alternative,
+                claimed_reward_gap=(
+                    attack["summary"]["malicious"]["mean_accepted_claimed_reward"]
+                    - best_alternative
+                ),
                 falsified_learning_count=falsified,
                 target_cdn_learning_count=target_count,
                 falsified_feedback_share=falsified / target_count,
@@ -314,23 +318,26 @@ def main():
         return
     (output / "metrics.json").write_text(json.dumps(rows, indent=2) + "\n")
     write_table(output / "cells.csv", rows,
-                ["replicate", "malicious_count", "claimed_reward", "g_13", "g_12",
+                ["replicate", "malicious_count", "claimed_ttlb_ms",
+                 "mean_accepted_claimed_reward", "g_13", "g_12",
                  "d_steer", "d_viewer", "c_attack", "delta_c",
                  "observed_cost_usd", "falsified_feedback_share", "attack"])
     plot(
         rows,
         "d_steer",
-        "D_steer: change in honest viewers' delayed-CDN priority",
+        "D_steer: delayed-CDN priority fraction",
         output / "D_steer.png",
+        0.05, 3,
     )
     plot(
         rows,
         "d_viewer",
-        "D_viewer: change in honest viewers' buffering fraction",
+        "D_viewer: buffering fraction",
         output / "D_viewer.png",
+        0.01, 3,
     )
-    plot(rows, "delta_c", "Change in unit egress cost (USD/GB)",
-         output / "Delta_c.png")
+    plot(rows, "delta_c", "Delta_c: egress cost (USD/GB)",
+         output / "Delta_c.png", 0.005, 4)
     print(f"Wrote {len(rows)} paired comparisons to {output}")
     if any(not row["control_order_valid"] for row in rows):
         print(

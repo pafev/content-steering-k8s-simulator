@@ -3,13 +3,12 @@
 {
   const params = new URLSearchParams(location.search);
   const target = params.get("attack_cdn");
-  const targetReward = Number(params.get("attack_reward"));
+  const targetTtlb = Number(params.get("attack_ttlb"));
   const rewardLambda = Number(params.get("reward_lambda") || 5);
   if (
     /^cdn-[123]$/.test(target || "") &&
-    params.has("attack_reward") &&
-    targetReward > 0 &&
-    targetReward < 1 &&
+    params.has("attack_ttlb") &&
+    Number.isSafeInteger(targetTtlb) && targetTtlb > 0 &&
     Number.isFinite(rewardLambda) && rewardLambda > 0
   ) {
     window.__cmcdLieAudit = [];
@@ -51,7 +50,7 @@
           ) {
             return line;
           }
-          const claimed = Math.round(duration * (1 / targetReward - 1) / rewardLambda);
+          const claimed = targetTtlb;
           window.__cmcdLieAudit.push({
             url,
             measured_ttlb_ms: Number(measured),
