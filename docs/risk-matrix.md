@@ -74,8 +74,15 @@ starts after 40 seconds of clean learning. Both runs measure only seconds
 40–120 through `--measurement-start 40`; `--attack-delay 40` separately
 enables false telemetry. Set `--measurement-start 0` on both runs to measure
 the full duration while still delaying the attack.
-`--skip-warmup` omits as requisições de aquecimento; o runner continua
-exigindo `HIT` nas respostas de mídia dos browsers.
+`--skip-warmup` omite o aquecimento. O runner exige que a mídia venha do
+cache da CDN. O NGINX pode retornar `STALE`, `UPDATING` ou `REVALIDATED`
+enquanto entrega um corpo armazenado; esses estados ficam separados de misses
+reais em `cache-validation.json`. Veja a
+[documentação do NGINX](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_cache_use_stale).
+Nas matrizes, `--require-fresh-cache` exige `HIT` em todas as respostas de
+mídia. O cache está configurado para 24 horas, e a primeira célula de cada
+invocação faz aquecimento completo. Uma célula falha por cache é repetida na
+retomada; o plotter ignora tentativas falhas e respostas não `HIT`.
 
 ## Metrics
 
@@ -116,16 +123,20 @@ sensitivities (lambda 1, 5, 15), randomized attack order and a clean control
 after each block of six attacks. From the repository root, run:
 
 ```sh
-bash scripts/run_research_matrices.sh 3 results/research-matrices
+bash scripts/run_research_matrices.sh low results/research-matrices
+bash scripts/run_research_matrices.sh medium results/research-matrices
+bash scripts/run_research_matrices.sh high results/research-matrices
 ```
 
-The first argument is the number of independent replicates; 3 is the planned
-value. The script saves each replicate's randomized cell order, waits for the
-runner's idle barrier before every execution and can resume completed cells.
-Each lambda directory receives `plots/ucb1/D_steer.png`, `D_viewer.png`,
+The first argument selects the reward sensitivity. There is one complete
+matrix per sensitivity. The optional second argument sets the output root.
+The script saves the randomized cell order, waits for the runner's idle barrier
+before every execution, and resumes successful cells after interruption.
+Failed runs remain on disk for audit and are retried.
+Each completed invocation writes `D_steer.png`, `D_viewer.png`,
 `Delta_c.png`, `metrics.json`, `calibration.json`, `controls.csv`,
-`controls-summary.csv` and `cells.csv`. The plotter requires six
-controls and all 36 cells per replicate before producing the final figures.
+`controls-summary.csv` and `cells.csv` under `plots/ucb1/`.
+The plotter requires six controls and all 36 cells for that sensitivity.
 The x-axis uses the same declared TTLB values (90, 200, 340, 530, 800,
 1200 ms) for all three lambda regimes. Exact resulting accepted reward and
 cost values live in `cells.csv`; figures show one effect number per cell.

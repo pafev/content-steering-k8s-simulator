@@ -96,7 +96,7 @@ pods e NetChaos foram removidos após cada execução.
 
 Artefatos: `results/stability-576p/`. Essas verificações demonstram
 estabilidade local da condição e do caminho de ataque; não substituem os
-seis controles escalonados e as réplicas da matriz completa. Fixar 576p em
+seis controles escalonados de cada matriz completa. Fixar 576p em
 todas as próximas execuções; não misturar os controles 1080p ou 720p aos
 resultados 576p.
 
@@ -157,17 +157,19 @@ média efetivamente aceita.
 Um controle de 60 s pareado ao ataque de 60 s validou `cells.csv` e os três
 mapas com o novo eixo: `D_steer=+0.0873`, `D_viewer=0` e
 `Delta_c=+0.00429 USD/GB`. São apenas testes de integração; a matriz final
-usa 120 s e seis controles por réplica. Artefatos: `results/ttlb-pilot/`.
+usa 120 s e seis controles por sensibilidade. Artefatos: `results/ttlb-pilot/`.
 
 ## Etapa 3: desenho das matrizes
 
-Para cada `lambda` e réplica, sortear uma ordem das 36 células e salvar a
+Para cada `lambda`, sortear uma ordem das 36 células e salvar a
 semente e a ordem. Dividir em seis blocos. Executar um controle limpo **após**
-cada bloco de seis ataques, inclusive no fim. Portanto, cada réplica tem 36
+cada bloco de seis ataques, inclusive no fim. Portanto, cada sensibilidade tem 36
 ataques e seis controles, sempre com dez players. Um `run_id` novo isola o modelo de cada
 execução; aquecimento e estado dos caches devem ser documentados e mantidos
 comparáveis. Avançar apenas se os controles e a checagem de recursos forem
-aceitáveis. Repetir as matrizes em réplicas independentes.
+aceitáveis. Há uma matriz por sensibilidade; a inferência estatística fica
+limitada à estabilidade observada nos seis controles, sem réplicas independentes
+das células de ataque.
 
 Para cada controle `c`, calcular `mu_1,c`, `mu_3,c`, `mu_2,c` das recompensas
 aceitas e **`g_13,c = mu_1,c - mu_3,c` e `g_12,c = mu_1,c - mu_2,c`**.
@@ -199,10 +201,10 @@ D_viewer = B_attack - mean(B_control,c for c in 1..6)
 
 Calcular `P_control,c` e `B_control,c` novamente para os slots honestos
 correspondentes a cada `M`. Guardar o número de consultas CSS por cliente.
-A execução é a unidade de repetição estatística; clientes e segmentos da
-mesma execução compartilham ambiente e modelo. Os seis controles formam uma
-referência para a réplica, não seis réplicas independentes de cada ataque.
-Reutilizar a mesma média de controle cria dependência entre células da réplica;
+A execução é a unidade experimental; clientes e segmentos da mesma execução
+compartilham ambiente e modelo. Os seis controles formam uma referência para
+cada sensibilidade, não seis réplicas independentes de cada ataque.
+Reutilizar a mesma média de controle cria dependência entre células da matriz;
 não tratar células como amostras independentes ao estimar incerteza.
 
 ## Custo de tráfego
@@ -240,20 +242,21 @@ não mede perda de receita por QoE.
 Produzir três matrizes de `D_steer`, três de `D_viewer` e três de `Delta_c`,
 mais tabela dos controles (`g_13`, `g_12`, prioridades da CDN-1 e
 dispersão), dados brutos por execução, parâmetros, versões, semente, ordem,
-leituras de recursos, tarifas e limitações. Concluir apenas o que as réplicas
-independentes e a estabilidade dos controles sustentarem. Alterar `lambda`
+leituras de recursos, tarifas e limitações. Concluir apenas o que uma execução
+por célula e a estabilidade dos controles sustentarem. Alterar `lambda`
 também modifica a escala dos intervalos de recompensa perante o bônus fixo
 de exploração do UCB1; comparar os regimes como políticas operacionais
 completas, sem atribuir toda a diferença exclusivamente à derivada de `R`.
 
-Comandos para executar e empacotar, após concluir o piloto e registrar a
-revisão do código usada na pesquisa:
+Cada chamada executa **uma matriz de uma sensibilidade**. O primeiro parâmetro
+seleciona `low` (`lambda=1`), `medium` (`lambda=5`) ou `high` (`lambda=15`);
+o segundo, opcional, é o diretório de saída. A execução pode ser retomada
+com o mesmo comando: células concluídas são ignoradas, e células falhas são
+repetidas. Cada matriz gera seus resultados em `plots/ucb1/`:
 
 ```sh
-bash scripts/run_research_matrices.sh 3 results/research-matrices
 for regime in low medium high; do
-  .venv/bin/python scripts/plot_risk_matrix.py \
-    "results/research-matrices/$regime" --strategy ucb1 --require-complete
+  bash scripts/run_research_matrices.sh "$regime" results/research-matrices
 done
 git rev-parse HEAD > results/research-matrices/code-commit.txt
 git status --short > results/research-matrices/worktree-status.txt
