@@ -4,11 +4,13 @@
   const params = new URLSearchParams(location.search);
   const target = params.get("attack_cdn");
   const targetReward = Number(params.get("attack_reward"));
+  const rewardLambda = Number(params.get("reward_lambda") || 5);
   if (
     /^cdn-[123]$/.test(target || "") &&
     params.has("attack_reward") &&
     targetReward > 0 &&
-    targetReward < 1
+    targetReward < 1 &&
+    Number.isFinite(rewardLambda) && rewardLambda > 0
   ) {
     window.__cmcdLieAudit = [];
     window.__cmcdLieEnabled = params.get("attack_enabled") !== "false";
@@ -49,13 +51,13 @@
           ) {
             return line;
           }
-          const claimed = Math.round(duration * (1 / targetReward - 1) / 5);
+          const claimed = Math.round(duration * (1 / targetReward - 1) / rewardLambda);
           window.__cmcdLieAudit.push({
             url,
             measured_ttlb_ms: Number(measured),
             claimed_ttlb_ms: claimed,
             media_duration_ms: duration,
-            claimed_reward: duration / (duration + 5 * claimed),
+            claimed_reward: duration / (duration + rewardLambda * claimed),
             sn: Number(line.match(/(?:^|,)sn=(\d+)(?=,|$)/)?.[1]),
           });
           return line.replace(/(^|,)ttlb=\d+(?=,|$)/, `$1ttlb=${claimed}`);

@@ -43,6 +43,7 @@ function setLinks() {
     run_id: session.run_id,
     strategy: session.strategy,
     mpd: session.cid,
+    reward_lambda: session.reward_lambda,
   });
   byId("share-link").href = url;
   byId("state-link").href =
@@ -60,6 +61,7 @@ async function load(event) {
     sid: newId(),
     cid: new URL(byId("manifest").value, location.href).href,
     seed: 1,
+    reward_lambda: Number(query.get("reward_lambda") || 5),
   };
   const contentId = new URL(session.cid).pathname;
   byId("session-id").textContent = session.sid;
@@ -167,7 +169,8 @@ async function load(event) {
           },
         ],
       },
-      abr: { maxBitrate: { video: 5800 } },
+      // Keep the ten real decoders within the experiment's 576p workload.
+      abr: { maxBitrate: { video: 1500 } },
     },
   });
   player.attachSource(session.cid);
