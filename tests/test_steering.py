@@ -49,6 +49,18 @@ def test_two_clients_share_learning_other_run_is_isolated(services, db):
     assert db.get("policy:run") is None  # no heuristic overriding the strategy
 
 
+def test_reward_lambda_is_run_scoped_and_changes_learning(services):
+    client, _, store = services
+    for run, lam in [("low", 1), ("high", 15)]:
+        store.register_session(run, run, reward_lambda=lam)
+        _, token = decision(client, run=run, sid=run)
+        assert store.record_cmcd_event(report(token, sid=run)) == "learned"
+        reward = float(store.get_state(run)["model"]["cdn-1"]["reward_sum"])
+        assert reward == pytest.approx(4000 / (4000 + lam * 100))
+    with pytest.raises(ValueError):
+        store.register_session("low", "another", reward_lambda=5)
+
+
 def test_direct_cdn_url_trains_its_own_arm(services):
     client, _, store = services
     store.register_session("run", "honest")
