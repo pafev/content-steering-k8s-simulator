@@ -56,12 +56,13 @@ honest players and one modified dash.js player (six total):
 ```sh
 .venv/bin/python scripts/multi_client.py --strategy ucb1 --clients 6 \
   --seconds 60 --malicious-count 1 --malicious-cdn cdn-1 \
-  --attack-reward 0.5 --output results/modified-player
+  --attack-ttlb 800 --output results/modified-player
 ```
 
 The modified player follows CSS decisions and downloads real media. For
-successful CDN-1 video responses, it changes `ttlb` so that the reported
-delivery reward `d/(d+5×ttlb)` is about 0.5.
+successful CDN-1 video responses, it declares `ttlb=800 ms`. The reported
+delivery reward is then computed from `d/(d+lambda×ttlb)`; with `d=4000 ms`
+and the default `lambda=5`, it is 0.5.
 
 The run's `modified-players.json` records original and claimed timing,
 matching responses, and telemetry ingestion results. The role label is used

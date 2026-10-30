@@ -8,9 +8,8 @@ dash-client pods and NetChaos objects to disappear and for both Kind workers
 to settle before starting a new run; inspect each `idle-check.json`.
 Modified players vary throughout the experiment and replace honest players.
 A modified player downloads genuine segments and changes only its CMCD `ttlb` for
-successful CDN-1 video responses. For a requested claimed reward `r`, it
-reports `ttlb = round(d × (1/r − 1) / lambda)`, where `d` is that segment's
-reported duration in milliseconds. The CSS uses `d/(d+lambda×ttlb)`;
+successful CDN-1 video responses. `--attack-ttlb` specifies the fixed TTLB
+declared in milliseconds. The CSS uses `d/(d+lambda×ttlb)`;
 `--reward-lambda` defaults to 5.
 
 ## Network delays and calibration
@@ -42,7 +41,7 @@ Run one clean control and one attack with the same strategy, replicate, video,
 10 players and fault setup. The first run warms
 all CDN caches; the second reuses them. After the clean control, generate and
 inspect calibration before
-running the pilot attack cell M=1, r=0.5:
+running the pilot attack cell M=1, declared TTLB=800 ms:
 
 ```sh
 .venv/bin/python scripts/multi_client.py --strategy ucb1 --clients 10 \
@@ -58,7 +57,7 @@ continuing. Repeat controls before treating a small reward gap as stable.
 ```sh
 .venv/bin/python scripts/multi_client.py --strategy ucb1 --clients 10 \
   --seconds 120 --measurement-start 40 --attack-delay 40 --replicate 1 \
-  --malicious-count 1 --attack-reward 0.5 \
+  --malicious-count 1 --attack-ttlb 800 \
   --fault-manifest manifests/risk-matrix-netchaos.yaml \
   --skip-warmup --output results/risk-matrix
 .venv/bin/python scripts/plot_risk_matrix.py results/risk-matrix --strategy ucb1
@@ -100,8 +99,8 @@ have enough buffer. Neither chart alone defines a healthy/impaired boundary;
 choose a practical threshold and uncertainty rule before drawing one.
 
 `metrics.json` also records `honest_reward_gap = mean_reward(CDN-1) −
-max(mean_reward(CDN-2), mean_reward(CDN-3))` from the clean control,
-`claimed_reward_gap = claimed_reward − best_alternative_control_reward`, and
+max(mean_reward(CDN-2), mean_reward(CDN-3))` from the mean of six controls,
+`claimed_reward_gap = mean_accepted_claimed_reward − best_alternative_control_reward`, and
 `falsified_feedback_share = accepted_falsified_CDN1_reports /
 all_accepted_CDN1_learning_reports` from the attack. The latter is the actual
 exposure of the CDN-1 learner; a modified player steered away from CDN-1 may
@@ -127,6 +126,9 @@ Each lambda directory receives `plots/ucb1/D_steer.png`, `D_viewer.png`,
 `Delta_c.png`, `metrics.json`, `calibration.json`, `controls.csv`,
 `controls-summary.csv` and `cells.csv`. The plotter requires six
 controls and all 36 cells per replicate before producing the final figures.
+The x-axis uses the same declared TTLB values (90, 200, 340, 530, 800,
+1200 ms) for all three lambda regimes. Exact resulting accepted reward and
+cost values live in `cells.csv`; figures show one effect number per cell.
 The pilot runs live in a separate directory and are never pooled into a matrix.
 
 The runner waits for NetChaos finalizer cleanup before removing dash-client

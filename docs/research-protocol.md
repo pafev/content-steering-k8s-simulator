@@ -10,13 +10,14 @@ experimento compara três valores calibrados de `lambda` na recompensa
 uma fórmula prescrita por CMCD ou Content Steering.
 
 Os eixos de cada matriz 6 × 6 são a quantidade de players modificados
-`M = 1..6` e a recompensa declarada `r = 0.9, 0.8, 0.7, 0.6, 0.5, 0.4`.
-`--attack-reward` preserva esse significado para qualquer `lambda`: o player
-declara `ttlb = round(d * (1/r - 1) / lambda)` na CDN-1. A alteração física
-de `ttlb` varia com `lambda`; registrar seu valor e a distância entre `r` e a
-recompensa honesta da CDN-1. Manter a faixa de `r` mesmo quando um valor
-promover, em vez de rebaixar, a CDN-1; identificar o sentido observado na
-interpretação da célula.
+`M = 1..6` e o `ttlb` declarado na CDN-1, em milissegundos:
+`90, 200, 340, 530, 800, 1200`. A faixa aproxima os TTLB que a antiga grade
+de `r=0.9..0.4` produzia com `lambda=5` e `d=4000 ms`, arredondados para
+valores legíveis. Ela é idêntica nas três sensibilidades e acima da mediana
+honesta observada da CDN-1 (~31 ms). O player declara esse valor fixo em cada
+resposta de vídeo elegível; a recompensa resultante é calculada pela função da
+execução e resumida apenas para relatos aceitos pelo CSS. O eixo representa
+o dado que o cliente controla, sem pressupor que ele conhece a função interna.
 
 ## Etapa 1: piloto curto e critérios de avanço
 
@@ -30,8 +31,8 @@ interpretação da célula.
    `CDN-1 > CDN-3 > CDN-2`. A derivada local é
    `abs(dR/dttlb) = lambda*d / (d + lambda*ttlb)^2`; seu valor não cresce
    indefinidamente com `lambda`.
-5. Registrar o sentido de cada `r = 0.9..0.4` em relação à recompensa honesta
-   da CDN-1, sem mudar a faixa de `r`.
+5. Registrar a recompensa resultante de cada TTLB declarado e verificar que a
+   faixa permanece acima do TTLB honesto típico da CDN-1.
 
 O controle disponível em `results/risk-matrix/v1` demonstrou a ordem esperada
 uma vez; ele não estabelece estabilidade. O piloto precisa produzir novos
@@ -61,8 +62,8 @@ dez pods e uma consulta posterior confirmou sua remoção. Os objetos NetChaos
 também foram removidos.
 
 No segundo controle, a recompensa honesta da CDN-1 foi 0.8708. Portanto,
-`r=0.9` a promoveria nesse regime. A faixa de `r` permanece inalterada por
-decisão do pesquisador; o sentido de cada célula será descrito nos resultados.
+`r=0.9` a promoveria nesse regime. Essa era uma observação do piloto antigo
+com recompensa-alvo; a matriz revisada usa TTLB fixo.
 Nenhuma conclusão de ataque pode ser extraída desses dois controles.
 
 ### Correção e validação da estabilidade
@@ -112,7 +113,10 @@ As sensibilidades escolhidas para o piloto e as matrizes são **baixa `lambda=1`
 média `lambda=5` e alta `lambda=15`**. São três coeficientes da mesma família
 de recompensa, não três funções usadas pela indústria. A escolha abrange uma
 escala de 15 vezes em `lambda` e será conferida no TTLB observado dos controles.
-Os valores de `r` e o protocolo de ataque permanecem constantes.
+Os valores declarados de `ttlb` e o protocolo de ataque permanecem constantes
+entre as três matrizes. A antiga grade de recompensa-alvo foi abandonada antes
+das matrizes completas por confundir a sensibilidade com magnitudes distintas
+de telemetria falsificada.
 
 ### Piloto das três sensibilidades (576p)
 
@@ -135,10 +139,25 @@ Em `d=4000 ms` e `ttlb=31 ms`, a sensibilidade local
 Uma célula `lambda=5, M=1, r=0.5` confirmou o fluxo completo: oito relatos
 falsificados aceitos, `D_steer=+0.0810`, `D_viewer=0` e
 `Delta_c=+0.00437 USD/GB` contra o único controle médio disponível.
-Esse contraste é apenas diagnóstico; a estimativa de cada célula da matriz
+Esse piloto usou o antigo ataque por recompensa-alvo; ele não entra nas novas
+matrizes de TTLB fixo. O contraste é apenas diagnóstico; a estimativa de cada célula da matriz
 usará os seis controles da respectiva réplica. Após esse piloto, o runner
 passou a pausar os players no encerramento antes de esperar 2 s pelos logs
 UDP já emitidos; o custo piloto pode incluir até esse curto intervalo extra.
+
+### Verificação do eixo TTLB fixo (2026-10-30)
+
+Após substituir a recompensa-alvo pelo TTLB declarado, uma execução curta
+com `lambda=15`, `M=1` e `--attack-ttlb 800` aceitou cinco relatos
+falsificados. Todos declararam 800 ms; a recompensa média aceita foi 0.25,
+consistente com `R=4000/(4000+15*800)`. A grade final usa 90, 200, 340,
+530, 800 e 1200 ms em todos os regimes. Os mapas exibem somente a medida
+de efeito por célula; `cells.csv` registra o TTLB declarado e a recompensa
+média efetivamente aceita.
+Um controle de 60 s pareado ao ataque de 60 s validou `cells.csv` e os três
+mapas com o novo eixo: `D_steer=+0.0873`, `D_viewer=0` e
+`Delta_c=+0.00429 USD/GB`. São apenas testes de integração; a matriz final
+usa 120 s e seis controles por réplica. Artefatos: `results/ttlb-pilot/`.
 
 ## Etapa 3: desenho das matrizes
 
