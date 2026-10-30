@@ -20,7 +20,10 @@ PRICES_USD_PER_GB = {"cdn-1": 0.045, "cdn-2": 0.11, "cdn-3": 0.10}
 def read_run(path):
     summary = json.loads(path.read_text())
     if not summary.get("success"):
-        raise ValueError(f"Incomplete run: {path}")
+        return None  # Keep failed artifacts, but only analyze completed attempts.
+    cache = json.loads((path.parent / "cache-validation.json").read_text())
+    if cache.get("cached_non_hit_responses"):
+        return None  # Cached but stale media is not comparable to HIT-only cells.
     config = summary["configuration"]
     if config["clients"] != 10:
         raise ValueError(f"Expected 10 players: {path}")
@@ -154,14 +157,22 @@ def main():
     parser.add_argument(
         "--strategy", choices=("ucb1", "epsilon_greedy", "linucb"), required=True
     )
+    parser.add_argument("--replicate", type=int,
+                        help="Analyze only this replicate (default: all replicates)")
     parser.add_argument(
         "--output", type=Path, help="Figure directory (default: INPUT/plots/STRATEGY)"
     )
     parser.add_argument("--require-complete", action="store_true",
                         help="Require six controls and all 36 attack cells per replicate")
     args = parser.parse_args()
-    runs = [read_run(path) for path in args.input.rglob("summary.json")]
+    found = [read_run(path) for path in args.input.rglob("summary.json")]
+    if any(run is None for run in found):
+        print(f"Ignoring {sum(run is None for run in found)} failed or non-HIT run(s)")
+    runs = [run for run in found if run is not None]
     runs = [run for run in runs if run["summary"]["strategy"] == args.strategy]
+    if args.replicate is not None:
+        runs = [run for run in runs
+                if run["summary"]["configuration"]["replicate"] == args.replicate]
     if not runs:
         raise ValueError(f"No {args.strategy} runs in {args.input}")
     controls = {}
@@ -264,6 +275,8 @@ def main():
             )
         )
     output = args.output or args.input / "plots" / args.strategy
+    if args.replicate is not None and args.output is None:
+        output /= f"replicate-{args.replicate}"
     output.mkdir(parents=True, exist_ok=True)
     calibrations = []
     for replicate, group in sorted(controls.items()):

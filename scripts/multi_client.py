@@ -25,6 +25,7 @@ IDLE_MEMORY_GIB = 1.5
 IDLE_SAMPLES = 3
 IDLE_INTERVAL_SECONDS = 5
 IDLE_TIMEOUT_SECONDS = 180
+CACHED_MEDIA_STATUSES = {"HIT", "STALE", "UPDATING", "REVALIDATED"}
 
 
 def _gib(value):
@@ -570,6 +571,7 @@ def observe(playwright, args, strategy, output, warmup=None):
     samples_file = (directory / "samples.jsonl").open("w")
     warmed = set(warmup["warmed_paths"]) if warmup else set()
     unexpected_misses = []
+    cached_non_hit = []
     video_reports = []
     gateway_requests = []
 
@@ -650,17 +652,15 @@ def observe(playwright, args, strategy, output, warmup=None):
             if (
                 (args.skip_warmup or (warmed and cache_path(response.url) in warmed))
                 and not path.endswith(".mpd")
-                and response.headers.get("x-cache-status") != "HIT"
             ):
-                unexpected_misses.append(
-                    dict(
-                        client=client,
-                        url=response.url,
-                        status=response.status,
-                        cache=response.headers.get("x-cache-status"),
-                        range=response.request.headers.get("range"),
-                    )
-                )
+                cache_status = response.headers.get("x-cache-status")
+                item = dict(client=client, url=response.url,
+                            status=response.status, cache=cache_status,
+                            range=response.request.headers.get("range"))
+                if cache_status not in CACHED_MEDIA_STATUSES:
+                    unexpected_misses.append(item)
+                elif cache_status != "HIT":
+                    cached_non_hit.append(item)
 
     def start_player(page, query):
         page.goto(f"{PLAYER_BASE}/?{urlencode(query)}", timeout=args.timeout * 1000)
@@ -851,7 +851,11 @@ def observe(playwright, args, strategy, output, warmup=None):
             problems.append("No accepted learning feedback")
         if unexpected_misses:
             problems.append(
-                f"{len(unexpected_misses)} browser media requests were not cache HITs"
+                f"{len(unexpected_misses)} browser media requests were not served from cache"
+            )
+        if args.require_fresh_cache and cached_non_hit:
+            problems.append(
+                f"{len(cached_non_hit)} browser media requests used non-HIT cached responses"
             )
         if gateway_requests:
             problems.append(
@@ -945,7 +949,8 @@ def observe(playwright, args, strategy, output, warmup=None):
         (directory / "cache-validation.json").write_text(
             json.dumps(
                 {
-                    "warmed_browser_misses": unexpected_misses,
+                    "uncached_browser_media": unexpected_misses,
+                    "cached_non_hit_responses": cached_non_hit,
                     "browser_media_checked": bool(warmed or args.skip_warmup),
                     "gateway_requests": gateway_requests,
                 },
@@ -1040,6 +1045,8 @@ def main():
         "--workers", type=int, default=4, help="Concurrent warmup downloads"
     )
     parser.add_argument("--skip-warmup", action="store_true")
+    parser.add_argument("--require-fresh-cache", action="store_true",
+                        help="Reject STALE/UPDATING/REVALIDATED media in research runs")
     parser.add_argument(
         "--output", type=Path, default=ROOT / "results" / "multi-client"
     )
