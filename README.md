@@ -85,6 +85,7 @@ Sessions expire after one hour without renewal; the UI renews every 30 seconds. 
 ## Run five clients and warm up caches
 
 [scripts/multi_client.py](scripts/multi_client.py) warms the CDNs through temporary direct port forwards and records decisions, cache, playback, and shared state. It runs one dash-client pod per client. See [how to run simulations](docs/simulations.md) and the [risk matrix](docs/risk-matrix.md). [Design and learning rule](docs/design.md) summarizes the results.
+The [research protocol](docs/research-protocol.md) records the experimental decisions, stability checks, and pilot results.
 
 ## Tests
 
