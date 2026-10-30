@@ -20,6 +20,73 @@ ROOT = Path(__file__).resolve().parents[1]
 STRATEGIES = ("ucb1", "linucb", "epsilon_greedy", "fixed", "random")
 BROWSER_ACCEPT_ENCODING = "gzip, deflate, br, zstd"
 PLAYER_BASE = "http://localhost:8080"
+IDLE_CPU_PERCENT = 50.0
+IDLE_MEMORY_GIB = 1.5
+IDLE_SAMPLES = 3
+IDLE_INTERVAL_SECONDS = 5
+IDLE_TIMEOUT_SECONDS = 180
+
+
+def _gib(value):
+    match = re.fullmatch(r"([\d.]+)(B|KiB|MiB|GiB|TiB)", value.strip())
+    if not match:
+        raise ValueError(f"Unexpected Docker memory value: {value}")
+    scale = {"B": 1 / 1024**3, "KiB": 1 / 1024**2,
+             "MiB": 1 / 1024, "GiB": 1, "TiB": 1024}
+    return float(match[1]) * scale[match[2]]
+
+
+def wait_for_idle(output):
+    """Require removed experiment resources and settled Kind workers."""
+    deadline = time.monotonic() + IDLE_TIMEOUT_SECONDS
+    consecutive = 0
+    readings = []
+    while time.monotonic() < deadline:
+        pods = subprocess.run(
+            ["kubectl", "--context", "kind-kind", "get", "pods", "-l",
+             "app=dash-client", "-o", "name"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip().splitlines()
+        faults = subprocess.run(
+            ["kubectl", "--context", "kind-kind", "get", "networkchaos",
+             "-o", "name"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip().splitlines()
+        raw = subprocess.run(
+            ["docker", "stats", "--no-stream", "--format",
+             "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}",
+             "kind-worker", "kind-worker2"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        workers = {}
+        for line in raw.splitlines():
+            name, cpu, memory = line.split("\t")
+            workers[name] = {
+                "cpu_percent": float(cpu.removesuffix("%")),
+                "memory_gib": _gib(memory.split(" / ")[0]),
+            }
+        if set(workers) != {"kind-worker", "kind-worker2"}:
+            raise RuntimeError(f"Could not read both Kind worker resources: {raw!r}")
+        settled = not pods and not faults and all(
+            v["cpu_percent"] <= IDLE_CPU_PERCENT
+            and v["memory_gib"] <= IDLE_MEMORY_GIB
+            for v in workers.values()
+        )
+        readings.append(dict(timestamp=datetime.now(timezone.utc).isoformat(),
+                             pods=pods, networkchaos=faults, workers=workers,
+                             settled=settled))
+        consecutive = consecutive + 1 if settled else 0
+        if consecutive >= IDLE_SAMPLES:
+            break
+        time.sleep(IDLE_INTERVAL_SECONDS)
+    result = dict(cpu_limit_percent=IDLE_CPU_PERCENT,
+                  memory_limit_gib=IDLE_MEMORY_GIB,
+                  consecutive_samples=IDLE_SAMPLES,
+                  interval_seconds=IDLE_INTERVAL_SECONDS,
+                  passed=consecutive >= IDLE_SAMPLES, readings=readings)
+    (output / "idle-check.json").write_text(json.dumps(result, indent=2) + "\n")
+    if not result["passed"]:
+        raise RuntimeError(f"Kind workers did not settle; see {output / 'idle-check.json'}")
 
 
 def pathway_from_url(url):
@@ -115,6 +182,7 @@ class DashClients:
 
     def __enter__(self):
         try:
+            wait_for_idle(self.output)
             for index in range(self.count):
                 name = f"dash-client-{uuid.uuid4().hex[:8]}-{index + 1}"
                 pod = {
@@ -291,9 +359,10 @@ class DashClients:
                     "pod",
                     *self.names,
                     "--ignore-not-found",
-                    "--wait=false",
+                    "--wait=true",
+                    "--timeout=90s",
                 ],
-                check=False,
+                check=True,
             )
         if cleanup_error:
             raise RuntimeError(
@@ -579,8 +648,7 @@ def observe(playwright, args, strategy, output, warmup=None):
                 cache_control=response.headers.get("cache-control"),
             )
             if (
-                warmed
-                and cache_path(response.url) in warmed
+                (args.skip_warmup or (warmed and cache_path(response.url) in warmed))
                 and not path.endswith(".mpd")
                 and response.headers.get("x-cache-status") != "HIT"
             ):
@@ -656,6 +724,7 @@ def observe(playwright, args, strategy, output, warmup=None):
                 "run_id": run_id,
                 "strategy": strategy,
                 "mpd": args.mpd,
+                "reward_lambda": args.reward_lambda,
             }
             if role == "modified":
                 query.update(
@@ -679,10 +748,16 @@ def observe(playwright, args, strategy, output, warmup=None):
         attack_at = run_start + args.attack_delay if modified else None
         observation_start = None
         viewer_initial = None
+        cdn_bytes_initial = None
         while True:
             if measurement_at is not None and time.monotonic() >= measurement_at:
                 viewer_initial = [viewer_snapshot(page) for page in pages]
                 observation_start = round(time.monotonic() - started, 3)
+                boundary_state = read_state(args.telemetry_base, run_id, args.timeout)
+                cdn_bytes_initial = {
+                    path: int(boundary_state["cdn"].get(path, {}).get("bytes", 0))
+                    for path in ("cdn-1", "cdn-2", "cdn-3")
+                }
                 measurement_at = None
             if attack_at is not None and time.monotonic() >= attack_at:
                 for client, player in modified.items():
@@ -731,8 +806,20 @@ def observe(playwright, args, strategy, output, warmup=None):
             pages[0].wait_for_timeout(wait * 1000)
 
         feedback = sum(int(model.get("n", 0)) for model in state["model"].values())
-        state = read_state(args.telemetry_base, run_id, args.timeout)
         viewer_final = [viewer_snapshot(page) for page in pages]
+        for page in pages:
+            page.evaluate("document.querySelector('video').pause()")
+        # Stop new playback requests, then let already emitted CDN UDP logs reach Redis.
+        time.sleep(2)
+        state = read_state(args.telemetry_base, run_id, args.timeout)
+        cdn_bytes_final = {
+            path: int(state["cdn"].get(path, {}).get("bytes", 0))
+            for path in ("cdn-1", "cdn-2", "cdn-3")
+        }
+        cdn_bytes_window = {
+            path: cdn_bytes_final[path] - cdn_bytes_initial[path]
+            for path in cdn_bytes_final
+        }
         viewers = []
         for session, initial, final in zip(sessions, viewer_initial, viewer_final):
             played = max(0.0, final["playback"] - initial["playback"])
@@ -850,7 +937,7 @@ def observe(playwright, args, strategy, output, warmup=None):
             json.dumps(
                 {
                     "warmed_browser_misses": unexpected_misses,
-                    "browser_media_checked": bool(warmed),
+                    "browser_media_checked": bool(warmed or args.skip_warmup),
                     "gateway_requests": gateway_requests,
                 },
                 indent=2,
@@ -868,6 +955,9 @@ def observe(playwright, args, strategy, output, warmup=None):
             },
             "observation_start": observation_start,
             "observation_end": observation_end,
+            "cdn_bytes_window": cdn_bytes_window,
+            "cdn_bytes_initial": cdn_bytes_initial,
+            "cdn_bytes_final": cdn_bytes_final,
             "delivery_calibration": delivery_calibration,
             "viewers": viewers,
             "final": {**sample, "state": state},
@@ -906,6 +996,8 @@ def main():
     )
     parser.add_argument("--bucket", type=Path, default=ROOT / "bucket")
     parser.add_argument("--strategy", choices=(*STRATEGIES, "all"), default="ucb1")
+    parser.add_argument("--reward-lambda", type=float, default=5.0,
+                        help="Positive coefficient in d/(d + lambda * ttlb)")
     parser.add_argument(
         "--clients",
         type=int,
@@ -983,6 +1075,8 @@ def main():
         parser.error(
             "clients/workers must be positive and stagger finite and nonnegative"
         )
+    if not 0 < args.reward_lambda < float("inf"):
+        parser.error("reward-lambda must be finite and positive")
     if not 0 <= args.attack_delay < args.seconds:
         parser.error("attack-delay must be nonnegative and shorter than seconds")
     if not 0 <= args.measurement_start < args.seconds:
