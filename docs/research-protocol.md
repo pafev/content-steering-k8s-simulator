@@ -113,16 +113,20 @@ slots honestos `M+1..10` e calcula custo unitário e custo observado. A opção
 `--require-complete` exige dois ataques válidos em cada uma das 36 células e
 seis controles.
 
-As sensibilidades escolhidas para o piloto e as matrizes são **baixa `lambda=1`,
-média `lambda=5` e alta `lambda=15`**. São três coeficientes da mesma família
-de recompensa, não três funções usadas pela indústria. A escolha abrange uma
-escala de 15 vezes em `lambda` e será conferida no TTLB observado dos controles.
+As sensibilidades escolhidas para as matrizes finais são **baixa `lambda=1`,
+média `lambda=10` e alta `lambda=25`**. São três coeficientes da mesma família
+de recompensa, não três funções usadas pela indústria. A revisão após a matriz
+`low` busca separar mais os gaps entre CDNs: com `d=4000 ms` e TTLBs
+representativos de 31/61/80 ms, `g_13` projetado é aproximadamente
+0.007/0.060/0.114. As matrizes parciais de `medium=5` foram descartadas e
+não entram na análise final. A escolha abrange uma escala de 25 vezes em
+`lambda` e será conferida no TTLB observado dos controles.
 Os valores declarados de `ttlb` e o protocolo de ataque permanecem constantes
 entre as três matrizes. A antiga grade de recompensa-alvo foi abandonada antes
 das matrizes completas por confundir a sensibilidade com magnitudes distintas
 de telemetria falsificada.
 
-### Piloto das três sensibilidades (576p)
+### Piloto histórico de `lambda=1,5,15` (576p)
 
 Um controle de 120 s por regime, sempre com dez clientes, NetChaos e a janela
 40–120 s, produziu:
@@ -135,7 +139,7 @@ Um controle de 120 s por regime, sempre com dez clientes, NetChaos e a janela
 
 Os gaps e a prioridade caminham na direção esperada com `lambda`, sob TTLB
 quase idênticos. A fração de primeiras prioridades não chega a 100% porque
-o UCB1 mantém o bônus de exploração. É uma verificação de calibração, não uma
+o UCB1 mantém o bônus de exploração. É uma verificação de calibração histórica, não uma
 estimativa de incerteza ou prova de causalidade: há só um controle por regime.
 Dados: `results/lambda-pilot/{low,medium,high}/`, incluindo `controls.csv`.
 Em `d=4000 ms` e `ttlb=31 ms`, a sensibilidade local
@@ -266,7 +270,7 @@ de exploração do UCB1; comparar os regimes como políticas operacionais
 completas, sem atribuir toda a diferença exclusivamente à derivada de `R`.
 
 Cada chamada executa **uma matriz de uma sensibilidade**. O primeiro parâmetro
-seleciona `low` (`lambda=1`), `medium` (`lambda=5`) ou `high` (`lambda=15`);
+seleciona `low` (`lambda=1`), `medium` (`lambda=10`) ou `high` (`lambda=25`);
 o segundo, opcional, é o diretório de saída. A execução pode ser retomada
 com o mesmo comando: células concluídas são ignoradas, e células falhas são
 repetidas. Cada matriz gera seus resultados em `plots/ucb1/`:
