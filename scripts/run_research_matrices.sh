@@ -9,8 +9,8 @@ fi
 label="$1"
 case "$label" in
   low) lambda=1 ;;
-  medium) lambda=5 ;;
-  high) lambda=15 ;;
+  medium) lambda=10 ;;
+  high) lambda=25 ;;
   *) echo "Unknown regime: $label (choose low, medium or high)" >&2; exit 2 ;;
 esac
 rep=1  # Internal identifier retained for matching the existing partial matrix.

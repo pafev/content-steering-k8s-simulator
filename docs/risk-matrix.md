@@ -120,7 +120,7 @@ universal.
 ## Complete the 6 × 6 matrices
 
 The revised [research protocol](research-protocol.md) uses UCB1 and three reward
-sensitivities (lambda 1, 5, 15). It runs two attacks per cell in separately
+sensitivities (lambda 1, 10, 25). It runs two attacks per cell in separately
 randomized passes, with a clean control after each block of six attacks in the
 first pass. From the repository root, run:
 
