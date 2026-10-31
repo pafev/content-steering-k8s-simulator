@@ -1,6 +1,7 @@
 """Compare modified-player runs with all clean controls in each replicate."""
 
 import argparse
+from collections import Counter
 import csv
 import json
 from pathlib import Path
@@ -163,7 +164,7 @@ def main():
         "--output", type=Path, help="Figure directory (default: INPUT/plots/STRATEGY)"
     )
     parser.add_argument("--require-complete", action="store_true",
-                        help="Require six controls and all 36 attack cells per replicate")
+                        help="Require six controls and two valid runs in each of 36 attack cells")
     args = parser.parse_args()
     found = [read_run(path) for path in args.input.rglob("summary.json")]
     if any(run is None for run in found):
@@ -186,14 +187,18 @@ def main():
             attacks = [run for run in runs
                        if run["summary"]["configuration"]["replicate"] == replicate
                        and run["summary"]["configuration"]["malicious_count"]]
-            cells = {(run["summary"]["configuration"]["malicious_count"],
-                      run["summary"]["configuration"]["attack_ttlb"])
-                     for run in attacks}
+            cells = Counter(
+                (run["summary"]["configuration"]["malicious_count"],
+                 run["summary"]["configuration"]["attack_ttlb"])
+                for run in attacks
+            )
             expected = {(m, ttlb) for m in COUNTS for ttlb in TTLB_VALUES_MS}
-            if len(group) != 6 or cells != expected or len(attacks) != 36:
+            if len(group) != 6 or set(cells) != expected or any(
+                cells[cell] != 2 for cell in expected
+            ):
                 raise ValueError(f"Incomplete replicate {replicate}: "
                                  f"{len(group)} controls, {len(cells)} distinct cells, "
-                                 f"{len(attacks)} attack runs")
+                                 f"{len(attacks)} attack runs; expected two per cell")
     rows = []
     for attack in runs:
         config = attack["summary"]["configuration"]
@@ -330,28 +335,48 @@ def main():
         )
         return
     (output / "metrics.json").write_text(json.dumps(rows, indent=2) + "\n")
-    write_table(output / "cells.csv", rows,
+    columns = ["replicate", "malicious_count", "claimed_ttlb_ms",
+               "mean_accepted_claimed_reward", "g_13", "g_12",
+               "d_steer", "d_viewer", "c_attack", "delta_c",
+               "observed_cost_usd", "falsified_feedback_share", "attack"]
+    write_table(output / "attack-runs.csv", rows, columns)
+    groups = {}
+    for row in rows:
+        key = (row["replicate"], row["malicious_count"], row["claimed_ttlb_ms"])
+        groups.setdefault(key, []).append(row)
+    cell_rows = []
+    averaged = ("mean_accepted_claimed_reward", "g_13", "g_12", "d_steer",
+                "d_viewer", "c_attack", "delta_c", "observed_cost_usd",
+                "falsified_feedback_share")
+    for key, group in sorted(groups.items()):
+        cell = dict(replicate=key[0], malicious_count=key[1],
+                    claimed_ttlb_ms=key[2], attack_runs=len(group))
+        cell.update({field: statistics.mean(row[field] for row in group)
+                     for field in averaged})
+        cell_rows.append(cell)
+    write_table(output / "cells.csv", cell_rows,
                 ["replicate", "malicious_count", "claimed_ttlb_ms",
+                 "attack_runs",
                  "mean_accepted_claimed_reward", "g_13", "g_12",
                  "d_steer", "d_viewer", "c_attack", "delta_c",
-                 "observed_cost_usd", "falsified_feedback_share", "attack"])
+                 "observed_cost_usd", "falsified_feedback_share"])
     plot(
-        rows,
+        cell_rows,
         "d_steer",
         "D_steer: delayed-CDN priority fraction",
         output / "D_steer.png",
         0.05, 3,
     )
     plot(
-        rows,
+        cell_rows,
         "d_viewer",
         "D_viewer: buffering fraction",
         output / "D_viewer.png",
         0.01, 3,
     )
-    plot(rows, "delta_c", "Delta_c: egress cost (USD/GB)",
+    plot(cell_rows, "delta_c", "Delta_c: egress cost (USD/GB)",
          output / "Delta_c.png", 0.005, 4)
-    print(f"Wrote {len(rows)} paired comparisons to {output}")
+    print(f"Wrote {len(cell_rows)} cell averages from {len(rows)} attack runs to {output}")
     if any(not row["control_order_valid"] for row in rows):
         print(
             "Warning: at least one control did not show CDN-1 > CDN-3 > CDN-2 in observed reward"

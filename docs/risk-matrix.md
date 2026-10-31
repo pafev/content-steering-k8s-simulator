@@ -80,7 +80,8 @@ enquanto entrega um corpo armazenado; esses estados ficam separados de misses
 reais em `cache-validation.json`. Veja a
 [documentação do NGINX](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_cache_use_stale).
 Nas matrizes, `--require-fresh-cache` exige `HIT` em todas as respostas de
-mídia. O cache está configurado para 24 horas, e a primeira célula de cada
+mídia. A CDN ignora o `Cache-Control: max-age=3600` da origem para que seu
+`proxy_cache_valid 24h` governe os objetos estáticos; a primeira célula de cada
 invocação faz aquecimento completo. Uma célula falha por cache é repetida na
 retomada; o plotter ignora tentativas falhas e respostas não `HIT`.
 
@@ -118,9 +119,10 @@ universal.
 
 ## Complete the 6 × 6 matrices
 
-The revised [research protocol](research-protocol.md) uses UCB1, three reward
-sensitivities (lambda 1, 5, 15), randomized attack order and a clean control
-after each block of six attacks. From the repository root, run:
+The revised [research protocol](research-protocol.md) uses UCB1 and three reward
+sensitivities (lambda 1, 5, 15). It runs two attacks per cell in separately
+randomized passes, with a clean control after each block of six attacks in the
+first pass. From the repository root, run:
 
 ```sh
 bash scripts/run_research_matrices.sh low results/research-matrices
@@ -129,17 +131,22 @@ bash scripts/run_research_matrices.sh high results/research-matrices
 ```
 
 The first argument selects the reward sensitivity. There is one complete
-matrix per sensitivity. The optional second argument sets the output root.
-The script saves the randomized cell order, waits for the runner's idle barrier
-before every execution, and resumes successful cells after interruption.
+matrix per sensitivity: 72 attack runs and six controls (78 total). The
+optional second argument sets the output root. The script saves both randomized
+cell orders, waits for the runner's idle barrier before every execution, and
+resumes successful cells after interruption. Re-running `low` after its first
+36 attacks adds only the second attack for each cell; its six controls are reused.
 Failed runs remain on disk for audit and are retried.
 Each completed invocation writes `D_steer.png`, `D_viewer.png`,
 `Delta_c.png`, `metrics.json`, `calibration.json`, `controls.csv`,
-`controls-summary.csv` and `cells.csv` under `plots/ucb1/`.
-The plotter requires six controls and all 36 cells for that sensitivity.
+`controls-summary.csv`, `attack-runs.csv` and `cells.csv` under `plots/ucb1/`.
+`cells.csv` and the figures contain means of the two attacks per cell;
+`attack-runs.csv` and `metrics.json` retain both individual effects. The plotter
+requires six controls and two valid attacks in each of the 36 cells.
 The x-axis uses the same declared TTLB values (90, 200, 340, 530, 800,
-1200 ms) for all three lambda regimes. Exact resulting accepted reward and
-cost values live in `cells.csv`; figures show one effect number per cell.
+1200 ms) for all three lambda regimes. Per-cell mean accepted rewards and
+costs live in `cells.csv`; individual values are in `attack-runs.csv`. Figures
+show one mean effect number per cell.
 The pilot runs live in a separate directory and are never pooled into a matrix.
 
 The runner waits for NetChaos finalizer cleanup before removing dash-client

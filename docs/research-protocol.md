@@ -105,9 +105,10 @@ resultados 576p.
 Implementado: `--reward-lambda` é registrado por execução no Redis, aplicado
 à recompensa e propagado ao player que falsifica `ttlb`. O runner salva
 `cdn_bytes_initial`, `cdn_bytes_final` e `cdn_bytes_window` para 40–120 s,
-além do `idle-check.json`. O plotter usa a média de todos os controles da
-réplica nos mesmos slots honestos `M+1..10` e calcula custo unitário e custo
-observado. A opção `--require-complete` exige 36 ataques e seis controles.
+além do `idle-check.json`. O plotter usa a média dos seis controles nos mesmos
+slots honestos `M+1..10` e calcula custo unitário e custo observado. A opção
+`--require-complete` exige dois ataques válidos em cada uma das 36 células e
+seis controles.
 
 As sensibilidades escolhidas para o piloto e as matrizes são **baixa `lambda=1`,
 média `lambda=5` e alta `lambda=15`**. São três coeficientes da mesma família
@@ -141,7 +142,7 @@ falsificados aceitos, `D_steer=+0.0810`, `D_viewer=0` e
 `Delta_c=+0.00437 USD/GB` contra o único controle médio disponível.
 Esse piloto usou o antigo ataque por recompensa-alvo; ele não entra nas novas
 matrizes de TTLB fixo. O contraste é apenas diagnóstico; a estimativa de cada célula da matriz
-usará os seis controles da respectiva réplica. Após esse piloto, o runner
+usará os seis controles da respectiva sensibilidade. Após esse piloto, o runner
 passou a pausar os players no encerramento antes de esperar 2 s pelos logs
 UDP já emitidos; o custo piloto pode incluir até esse curto intervalo extra.
 
@@ -161,15 +162,25 @@ usa 120 s e seis controles por sensibilidade. Artefatos: `results/ttlb-pilot/`.
 
 ## Etapa 3: desenho das matrizes
 
-Para cada `lambda`, sortear uma ordem das 36 células e salvar a
-semente e a ordem. Dividir em seis blocos. Executar um controle limpo **após**
-cada bloco de seis ataques, inclusive no fim. Portanto, cada sensibilidade tem 36
-ataques e seis controles, sempre com dez players. Um `run_id` novo isola o modelo de cada
+Para cada `lambda`, sortear duas ordens independentes das 36 células e salvar
+as sementes e ordens. Na primeira passagem, executar um controle limpo **após**
+cada bloco de seis ataques, inclusive no fim. A segunda passagem repete cada
+célula uma vez, sem novos controles. Portanto, cada sensibilidade tem **72
+ataques e seis controles**, sempre com dez players. Um `run_id` novo isola o modelo de cada
 execução; aquecimento e estado dos caches devem ser documentados e mantidos
 comparáveis. Avançar apenas se os controles e a checagem de recursos forem
-aceitáveis. Há uma matriz por sensibilidade; a inferência estatística fica
-limitada à estabilidade observada nos seis controles, sem réplicas independentes
-das células de ataque.
+aceitáveis. Há uma matriz por sensibilidade, com duas execuções independentes
+por célula; os seis controles são uma referência compartilhada, inclusive
+para a segunda passagem. Como ela ocorre depois dos controles, registrar a
+possibilidade de deriva temporal e manter a barreira de recursos antes de
+cada execução.
+
+Na execução `low`, a origem impunha `Cache-Control: max-age=3600`, que tinha
+prioridade sobre `proxy_cache_valid 24h` da CDN. Uma célula `M=3`, TTLB
+declarado de 530 ms, registrou 46 respostas `STALE` e foi excluída. A CDN
+passou a ignorar esse cabeçalho para os objetos estáticos; a mesma célula foi
+repetida após reconstruir as CDNs e terminou com zero respostas não `HIT`.
+As duas tentativas permanecem nos dados brutos para auditoria.
 
 Para cada controle `c`, calcular `mu_1,c`, `mu_3,c`, `mu_2,c` das recompensas
 aceitas e **`g_13,c = mu_1,c - mu_3,c` e `g_12,c = mu_1,c - mu_2,c`**.
@@ -195,8 +206,9 @@ em primeiro lugar. `B` é a média, nos mesmos slots, de
 `rebuffer_seconds / (played_seconds + rebuffer_seconds)` entre 40 e 120 s.
 
 ```text
-D_steer  = P_attack - mean(P_control,c for c in 1..6)
-D_viewer = B_attack - mean(B_control,c for c in 1..6)
+D_steer,i  = P_attack,i - mean(P_control,c for c in 1..6)
+D_viewer,i = B_attack,i - mean(B_control,c for c in 1..6)
+D_celula   = mean(D_1, D_2)
 ```
 
 Calcular `P_control,c` e `B_control,c` novamente para os slots honestos
@@ -205,7 +217,8 @@ A execução é a unidade experimental; clientes e segmentos da mesma execução
 compartilham ambiente e modelo. Os seis controles formam uma referência para
 cada sensibilidade, não seis réplicas independentes de cada ataque.
 Reutilizar a mesma média de controle cria dependência entre células da matriz;
-não tratar células como amostras independentes ao estimar incerteza.
+não tratar células como amostras independentes ao estimar incerteza. Guardar
+ambos os efeitos individuais por célula além da média usada nos mapas.
 
 ## Custo de tráfego
 
@@ -228,7 +241,8 @@ Para bytes `B_j` entregues no intervalo de medição:
 C_observado_USD = sum((B_j / 1e9) * p_j)
 s_j = B_j / sum(B_k)
 c_USD_por_GB = sum(s_j * p_j)
-Delta_c = c_attack - mean(c_control,c for c in 1..6)
+Delta_c,i = c_attack,i - mean(c_control,c for c in 1..6)
+Delta_c,celula = mean(Delta_c,1, Delta_c,2)
 ```
 
 `Delta_c` é a diferença de preço médio por GB entregue. Para um volume
@@ -242,7 +256,7 @@ não mede perda de receita por QoE.
 Produzir três matrizes de `D_steer`, três de `D_viewer` e três de `Delta_c`,
 mais tabela dos controles (`g_13`, `g_12`, prioridades da CDN-1 e
 dispersão), dados brutos por execução, parâmetros, versões, semente, ordem,
-leituras de recursos, tarifas e limitações. Concluir apenas o que uma execução
+leituras de recursos, tarifas e limitações. Concluir apenas o que duas execuções
 por célula e a estabilidade dos controles sustentarem. Alterar `lambda`
 também modifica a escala dos intervalos de recompensa perante o bônus fixo
 de exploração do UCB1; comparar os regimes como políticas operacionais
@@ -266,10 +280,11 @@ tar -czf results/content-steering-tcc-delivery.tar.gz \
 ```
 
 Cada regime gera `controls.csv`, `controls-summary.csv`, `cells.csv`, `calibration.json`,
-`metrics.json` e três figuras PNG em `plots/ucb1/`; os diretórios datados
+`metrics.json`, `attack-runs.csv` e três figuras PNG em `plots/ucb1/`; os diretórios datados
 guardam os dados brutos e `idle-check.json`. O CSV de células inclui o custo
-observado em USD para os bytes da célula e `Delta_c` em USD/GB contra a média
-dos controles. A comparação econômica principal é `Delta_c`, porque o volume
+observado médio em USD para os bytes das duas execuções e `Delta_c` médio em
+USD/GB contra a média dos controles. `attack-runs.csv` e `metrics.json` guardam
+os dois efeitos individuais. A comparação econômica principal é `Delta_c`, porque o volume
 de bytes pode variar entre execuções. Preservar também o código fonte exato
 correspondente ao commit registrado; se o worktree não estiver limpo, salvar
 um patch ou fazer um commit antes das matrizes.

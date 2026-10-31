@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One UCB1 risk matrix per reward regime and invocation.
+# One UCB1 risk matrix per reward regime: two attacks per cell, six controls.
 set -euo pipefail
 
 if (( $# < 1 || $# > 2 )); then
@@ -20,9 +20,9 @@ runner=.venv/bin/python
 fault=manifests/risk-matrix-netchaos.yaml
 
 has_run() {
-  "$runner" - "$out" "$rep" "$lambda" "$1" "$2" "$3" <<'PY'
+  "$runner" - "$out" "$rep" "$lambda" "$1" "$2" "$3" "$4" <<'PY'
 import json, pathlib, sys
-root, rep, lam, kind, count, ttlb = sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), sys.argv[4], int(sys.argv[5]), int(sys.argv[6])
+root, rep, lam, kind, count, ttlb, target = sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), sys.argv[4], int(sys.argv[5]), int(sys.argv[6]), int(sys.argv[7])
 matches = 0
 for path in pathlib.Path(root).glob('*/multi-*/summary.json'):
     try:
@@ -38,7 +38,6 @@ for path in pathlib.Path(root).glob('*/multi-*/summary.json'):
              or (kind == 'attack' and cfg['malicious_count'] == count
                  and cfg.get('attack_ttlb') == ttlb))):
         matches += 1
-target = count if kind == 'control' else 1
 sys.exit(0 if matches >= target else 1)
 PY
 }
@@ -75,36 +74,53 @@ output.write_text("".join(f"{m} {ttlb}\n" for m, ttlb in cells))
 output.with_name(output.name.replace("order-", "seed-")).write_text(f"{seed}\n")
 PY
 fi
-completed=0
+second_order="$out/order-attack-pass-2.txt"
+if [[ ! -f "$second_order" ]]; then
+  "$runner" - "$order" "$second_order" "$lambda" "$rep" <<'PY'
+import pathlib, random, sys
+first, second = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+lam, rep = int(sys.argv[3]), int(sys.argv[4])
+cells = first.read_text().splitlines()
+seed = 20261029 + 100 * lam + rep + 1_000_000
+random.Random(seed).shuffle(cells)
+second.write_text("\n".join(cells) + "\n")
+second.with_name('seed-attack-pass-2.txt').write_text(f"{seed}\n")
+PY
+fi
 started=0
-while read -r count ttlb; do
-  # A fresh invocation starts a new run_id and waits for Kind to settle.
-  if ! has_run attack "$count" "$ttlb"; then
-    warmup=()
-    if ((started > 0)); then warmup=(--skip-warmup); fi
-    "$runner" scripts/multi_client.py --strategy ucb1 --clients 10 \
-      --seconds 120 --measurement-start 40 --attack-delay 40 \
-      --require-fresh-cache \
-      --reward-lambda "$lambda" --replicate "$rep" \
-      --malicious-count "$count" --attack-ttlb "$ttlb" \
-      --fault-manifest "$fault" --output "$out" \
-      "${warmup[@]}"
-    ((started+=1))
-  fi
-  ((completed+=1))
-  if ((completed % 6 == 0)); then
-    if ! has_run control "$((completed / 6))" 0; then
+for pass in 1 2; do
+  current_order="$order"
+  if ((pass == 2)); then current_order="$second_order"; fi
+  completed=0
+  while read -r count ttlb; do
+    # A fresh invocation starts a new run_id and waits for Kind to settle.
+    if ! has_run attack "$count" "$ttlb" "$pass"; then
       warmup=()
       if ((started > 0)); then warmup=(--skip-warmup); fi
       "$runner" scripts/multi_client.py --strategy ucb1 --clients 10 \
-        --seconds 120 --measurement-start 40 --reward-lambda "$lambda" \
+        --seconds 120 --measurement-start 40 --attack-delay 40 \
         --require-fresh-cache \
-        --replicate "$rep" --fault-manifest "$fault" \
-        --output "$out" "${warmup[@]}"
+        --reward-lambda "$lambda" --replicate "$rep" \
+        --malicious-count "$count" --attack-ttlb "$ttlb" \
+        --fault-manifest "$fault" --output "$out" \
+        "${warmup[@]}"
       ((started+=1))
     fi
-    check_control
-  fi
-done < "$order"
+    ((completed+=1))
+    if ((pass == 1 && completed % 6 == 0)); then
+      if ! has_run control 0 0 "$((completed / 6))"; then
+        warmup=()
+        if ((started > 0)); then warmup=(--skip-warmup); fi
+        "$runner" scripts/multi_client.py --strategy ucb1 --clients 10 \
+          --seconds 120 --measurement-start 40 --reward-lambda "$lambda" \
+          --require-fresh-cache \
+          --replicate "$rep" --fault-manifest "$fault" \
+          --output "$out" "${warmup[@]}"
+        ((started+=1))
+      fi
+      check_control
+    fi
+  done < "$current_order"
+done
 "$runner" scripts/plot_risk_matrix.py "$out" --strategy ucb1 \
   --replicate "$rep" --output "$out/plots/ucb1" --require-complete
