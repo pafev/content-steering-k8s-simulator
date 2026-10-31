@@ -84,6 +84,9 @@ nem objetos NetChaos. Amostras a cada 5 s, prazo de 180 s. O arquivo
 `idle-check.json` registra o resultado de cada invocação. Esses limiares
 foram escolhidos para este cluster Kind de dois workers e devem ser
 recalibrados se o ambiente mudar.
+Após interrupção por suspensão do notebook, o runner também verifica a
+estabilidade antes do aquecimento completo e aguarda CDNs, origem, gateway e
+telemetria ficarem prontos antes de abrir os port-forwards.
 
 Dois controles consecutivos a 576p, com dez clientes e o mesmo NetChaos,
 foram concluídos com `success=true`, sem rebuffer e com medianas `ttlb`
