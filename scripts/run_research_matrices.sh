@@ -43,16 +43,22 @@ PY
 }
 
 check_control() {
-  "$runner" - "$out" "$rep" "$lambda" <<'PY'
+  "$runner" - "$out" "$rep" "$lambda" "$1" <<'PY'
 import json, pathlib, sys
-root, rep, lam = pathlib.Path(sys.argv[1]), int(sys.argv[2]), float(sys.argv[3])
+root, rep, lam, index = pathlib.Path(sys.argv[1]), int(sys.argv[2]), float(sys.argv[3]), int(sys.argv[4])
 controls = []
 for path in root.glob('*/multi-*/summary.json'):
     summary = json.loads(path.read_text())
     cfg = summary['configuration']
-    if cfg['replicate'] == rep and cfg.get('reward_lambda', 5) == lam and cfg['malicious_count'] == 0:
+    cache = json.loads((path.parent / 'cache-validation.json').read_text())
+    if (summary.get('success') and not cache.get('cached_non_hit_responses')
+        and cfg['replicate'] == rep and cfg.get('reward_lambda', 5) == lam
+        and cfg['malicious_count'] == 0):
         controls.append((path, summary))
-path, summary = max(controls, key=lambda item: item[0].parent.parent.name)
+controls.sort(key=lambda item: item[0].parent.parent.name)
+if len(controls) < index:
+    raise SystemExit(f'Missing control {index}: found {len(controls)} valid controls')
+path, summary = controls[index - 1]
 values = summary['delivery_calibration']
 rewards = {p: values[p]['mean_learning_reward'] for p in ('cdn-1', 'cdn-2', 'cdn-3')}
 if not summary['success'] or not rewards['cdn-1'] > rewards['cdn-3'] > rewards['cdn-2']:
@@ -118,7 +124,7 @@ for pass in 1 2; do
           --output "$out" "${warmup[@]}"
         ((started+=1))
       fi
-      check_control
+      check_control "$((completed / 6))"
     fi
   done < "$current_order"
 done

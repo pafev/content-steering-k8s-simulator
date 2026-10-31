@@ -90,6 +90,21 @@ def wait_for_idle(output):
         raise RuntimeError(f"Kind workers did not settle; see {output / 'idle-check.json'}")
 
 
+def wait_for_services():
+    """Do not start port-forwards while a CDN or the origin is unavailable."""
+    subprocess.run(
+        ["kubectl", "--context", "kind-kind", "wait", "--for=condition=Ready",
+         "pod/cdn-1-edge-1", "pod/cdn-2-edge-1", "pod/cdn-3-edge-1",
+         "pod/origin-server", "pod/gateway", "--timeout=180s"],
+        check=True,
+    )
+    subprocess.run(
+        ["kubectl", "--context", "kind-kind", "wait", "--for=condition=Ready",
+         "pod", "-l", "app=telemetry-service", "--timeout=180s"],
+        check=True,
+    )
+
+
 def pathway_from_url(url):
     parsed = urlsplit(url)
     match = re.fullmatch(
@@ -1127,6 +1142,9 @@ def main():
     )
     output.mkdir(parents=True)
     runs = []
+    if not args.skip_warmup:
+        wait_for_idle(output)
+    wait_for_services()
     with ServiceForwards(output, warmup=not args.skip_warmup) as services:
         args.telemetry_base = services.bases["telemetry-service"]
         try:
