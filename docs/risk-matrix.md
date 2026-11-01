@@ -84,6 +84,21 @@ mídia. A CDN ignora o `Cache-Control: max-age=3600` da origem para que seu
 `proxy_cache_valid 24h` governe os objetos estáticos; a primeira célula de cada
 invocação faz aquecimento completo. Uma célula falha por cache é repetida na
 retomada; o plotter ignora tentativas falhas e respostas não `HIT`.
+Um aquecimento que recebe `HIT` não renova o TTL do objeto. Se uma matriz
+atravessar o vencimento das 24 horas, podem surgir respostas `STALE` mesmo
+após o aquecimento. Com a execução parada e sem `dash-client` ou `NetworkChaos`
+ativos, recrie os três pods para esvaziar os caches e retome o mesmo regime:
+
+```sh
+kubectl --context kind-kind delete pod cdn-1-edge-1 cdn-2-edge-1 cdn-3-edge-1
+kubectl --context kind-kind apply -f manifests/k8s-deploy.yaml
+kubectl --context kind-kind wait --for=condition=Ready \
+  pod/cdn-1-edge-1 pod/cdn-2-edge-1 pod/cdn-3-edge-1 --timeout=180s
+bash scripts/run_research_matrices.sh high
+```
+
+O primeiro novo run aquece os caches vazios; os runs válidos anteriores são
+preservados. Substitua `high` pelo regime interrompido.
 
 ## Metrics
 
