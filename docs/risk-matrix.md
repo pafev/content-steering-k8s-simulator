@@ -1,95 +1,70 @@
-# False telemetry risk matrix
+# Executar as matrizes de risco
 
-This experiment uses the fixed count of 10 real dash.js players per run.
-The player is capped at the MPD's 576p, 1.5 Mb/s representation to keep ten
-simultaneous browser decoders within the Kind cluster's CPU capacity. Keep this
-workload fixed across controls and attack cells. The runner waits for old
-dash-client pods and NetChaos objects to disappear and for both Kind workers
-to settle before starting a new run; inspect each `idle-check.json`.
-Modified players vary throughout the experiment and replace honest players.
-A modified player downloads genuine segments and changes only its CMCD `ttlb` for
-successful CDN-1 video responses. `--attack-ttlb` specifies the fixed TTLB
-declared in milliseconds. The CSS uses `d/(d+lambda×ttlb)`;
-`--reward-lambda` defaults to 5.
+Este guia é o procedimento operacional para as três matrizes UCB1. O desenho,
+as fórmulas e os limites de interpretação estão no
+[protocolo de pesquisa](research-protocol.md). Para preparar Kind, dependências
+e NetChaos, siga [simulations.md](simulations.md).
 
-## Network delays and calibration
+## Condições fixas
 
-The [fault manifest](../manifests/risk-matrix-netchaos.yaml) applies initial
-4, 12, and 9 ms delays to packets leaving CDN-1, CDN-2, and CDN-3 for the
-player PodIPs. This shapes the media response direction.
-The ordering is based on one hour of IPv4 ICMP measurements from
-[RIPE Atlas probe 24628](https://atlas.ripe.net/api/v2/probes/24628/).
+O experimento usa dez players reais, vídeo 576p/1,5 Mb/s, 120 s por execução,
+ataque após 40 s e análise de 40–120 s. O
+[manifesto de falha](../manifests/risk-matrix-netchaos.yaml) configura atrasos
+iniciais de 4, 12 e 9 ms para tráfego de CDN-1, CDN-2 e CDN-3 destinado aos
+pods de clientes. A calibração deve confirmar a ordem observada de
+recompensas `CDN-1 > CDN-3 > CDN-2`; a configuração de atraso por si só não
+a garante. O runner cria um pod `dash-client` por player e remove os pods e
+objetos NetChaos ao fim de cada execução. Execute somente uma matriz por vez.
 
-Run a clean control and inspect `calibration.json`: it reports accepted video
-samples, median/p90 browser `ttlb`, and mean learning reward per CDN. Check the
-observed CDN reward order before interpreting attacks; the configured delays
-alone do not guarantee it.
+Cada matriz tem 36 células (`M=1..6` clientes modificados × `ttlb` declarado
+de 90, 200, 340, 530, 800 ou 1200 ms), dois ataques por célula e seis
+controles: **78 execuções válidas por regime**. As ordens de ataque são
+embaralhadas e salvas. O runner aguarda a barreira de recursos do cluster
+antes de cada execução; consulte o respectivo `idle-check.json` se ela falhar.
 
-## Run a matched pair
+## Executar ou retomar
 
-Follow [simulations.md](simulations.md) to start Kind, the simulator, NetChaos,
-and optionally port-forward the gateway to inspect the system. Install `scripts/requirements.txt`
-and `scripts/plot-requirements.txt`. The runner creates one dash-client pod per
-player, applies faults after the pods are ready, and removes them at the end
-of each run. Check `kubectl --context kind-kind get networkchaos` while a run
-is active. Run one experiment at a time: the fault manifest selects all
-`dash-client` pods as targets and names `cdn-1-edge-1`, `cdn-2-edge-1`, and
-`cdn-3-edge-1` as sources. Update the manifest if the CDN pods are renamed.
-The player pods also have a `steering-client-index` label (1–10) for later client-specific faults.
-
-Run one clean control and one attack with the same strategy, replicate, video,
-10 players and fault setup. The first run warms
-all CDN caches; the second reuses them. After the clean control, generate and
-inspect calibration before
-running the pilot attack cell M=1, declared TTLB=800 ms:
+Na raiz do repositório, escolha **um** regime por invocação:
 
 ```sh
-.venv/bin/python scripts/multi_client.py --strategy ucb1 --clients 10 \
-  --seconds 120 --measurement-start 40 --replicate 1 \
-  --fault-manifest manifests/risk-matrix-netchaos.yaml \
-  --output results/risk-matrix
-.venv/bin/python scripts/plot_risk_matrix.py results/risk-matrix --strategy ucb1
+bash scripts/run_research_matrices.sh low
+bash scripts/run_research_matrices.sh medium
+bash scripts/run_research_matrices.sh high
 ```
 
-Check `results/risk-matrix/plots/ucb1/calibration.json` before
-continuing. Repeat controls before treating a small reward gap as stable.
+`low`, `medium` e `high` usam `lambda=1`, `10` e `25`, respectivamente.
+O segundo argumento opcional define a raiz de saída (padrão:
+`results/research-matrices`). Repetir o mesmo comando retoma a matriz:
+execuções válidas são reutilizadas e falhas são refeitas. O script exige seis
+controles e dois ataques válidos em cada célula antes de produzir os mapas.
+Na primeira passagem, há um controle após cada seis ataques; a segunda
+passagem completa o segundo ataque por célula sem novos controles.
+
+Após a conclusão, confira em `results/research-matrices/<regime>/plots/ucb1/`
+as 36 linhas de `cells.csv`, 72 de `attack-runs.csv` e seis de `controls.csv`.
+`controls-summary.csv` resume os gaps de recompensa e a prioridade da CDN-1;
+`calibration.json` mostra a calibração detalhada. `metrics.json` preserva
+efeitos individuais e caminhos dos runs. `D_steer.png`, `D_viewer.png` e
+`Delta_c.png` exibem as médias das células. O plotter ignora tentativas
+falhas e respostas de mídia que não foram `HIT`.
+
+## Falha por cache após uma pausa longa
+
+As matrizes exigem `HIT` em todas as respostas de mídia do browser.
+O NGINX usa `proxy_cache_valid 24h` para os objetos estáticos e ignora o
+`Cache-Control: max-age=3600` da origem. Aquecer um objeto já em `HIT` **não
+renova** sua validade. Se uma matriz atravessar o vencimento do cache,
+respostas `STALE`, `UPDATING` ou `REVALIDATED` invalidam a execução, ainda
+que o corpo tenha vindo do cache. Verifique `cache-validation.json` para
+separar esses estados de misses reais.
+
+Com a execução parada e sem pods `dash-client` nem objetos `NetworkChaos`
+ativos, recrie os três pods de CDN para esvaziar os caches e retome o mesmo
+regime:
 
 ```sh
-.venv/bin/python scripts/multi_client.py --strategy ucb1 --clients 10 \
-  --seconds 120 --measurement-start 40 --attack-delay 40 --replicate 1 \
-  --malicious-count 1 --attack-ttlb 800 \
-  --fault-manifest manifests/risk-matrix-netchaos.yaml \
-  --skip-warmup --output results/risk-matrix
-.venv/bin/python scripts/plot_risk_matrix.py results/risk-matrix --strategy ucb1
-```
-
-The plotter writes `D_steer.png`, `D_viewer.png`, `Delta_c.png`,
-`metrics.json`, `calibration.json`, `controls.csv`, `controls-summary.csv`
-and `cells.csv` under
-`results/risk-matrix/plots/ucb1/`. Runs made before interval byte snapshots
-were implemented cannot be used for the cost plot. Gray
-cells have not run. Check each run's `summary.json` for `success`, `problems`,
-cache hits, and `accepted_falsified` before interpreting a pair. The attack
-starts after 40 seconds of clean learning. Both runs measure only seconds
-40–120 through `--measurement-start 40`; `--attack-delay 40` separately
-enables false telemetry. Set `--measurement-start 0` on both runs to measure
-the full duration while still delaying the attack.
-`--skip-warmup` omite o aquecimento. O runner exige que a mídia venha do
-cache da CDN. O NGINX pode retornar `STALE`, `UPDATING` ou `REVALIDATED`
-enquanto entrega um corpo armazenado; esses estados ficam separados de misses
-reais em `cache-validation.json`. Veja a
-[documentação do NGINX](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_cache_use_stale).
-Nas matrizes, `--require-fresh-cache` exige `HIT` em todas as respostas de
-mídia. A CDN ignora o `Cache-Control: max-age=3600` da origem para que seu
-`proxy_cache_valid 24h` governe os objetos estáticos; a primeira célula de cada
-invocação faz aquecimento completo. Uma célula falha por cache é repetida na
-retomada; o plotter ignora tentativas falhas e respostas não `HIT`.
-Um aquecimento que recebe `HIT` não renova o TTL do objeto. Se uma matriz
-atravessar o vencimento das 24 horas, podem surgir respostas `STALE` mesmo
-após o aquecimento. Com a execução parada e sem `dash-client` ou `NetworkChaos`
-ativos, recrie os três pods para esvaziar os caches e retome o mesmo regime:
-
-```sh
+kubectl --context kind-kind get networkchaos
+kubectl --context kind-kind get pods -l app=dash-client
 kubectl --context kind-kind delete pod cdn-1-edge-1 cdn-2-edge-1 cdn-3-edge-1
 kubectl --context kind-kind apply -f manifests/k8s-deploy.yaml
 kubectl --context kind-kind wait --for=condition=Ready \
@@ -97,80 +72,8 @@ kubectl --context kind-kind wait --for=condition=Ready \
 bash scripts/run_research_matrices.sh high
 ```
 
-O primeiro novo run aquece os caches vazios; os runs válidos anteriores são
-preservados. Substitua `high` pelo regime interrompido.
-
-## Metrics
-
-For each honest player, `P` is the fraction of observed CSS steering responses
-whose first priority is CDN-2 or CDN-3. The run's `P` is the mean of those
-player fractions. Use steering responses from seconds 40–120 in both runs.
-
-`D_steer = P_attack − mean(P_control,c)` across all six controls of the
-replicate for the **same honest slots** M+1–10.
-Positive values mean the modified reports shifted honest players toward the
-two delayed CDNs. This measures CSS decisions, not necessarily the segment
-path ultimately used after fallback.
-
-For each honest player, `B = rebuffer_seconds / (played_seconds +
-rebuffer_seconds)` during seconds 40–120. `D_viewer = B_attack −
-mean(B_control,c)` over the same slots and six controls. Positive values mean
-more buffering.
-Startup time is recorded in `summary.json` but is outside this metric. A
-zero `D_viewer` is possible even when steering changes because the player may
-have enough buffer. Neither chart alone defines a healthy/impaired boundary;
-choose a practical threshold and uncertainty rule before drawing one.
-
-`metrics.json` also records `honest_reward_gap = mean_reward(CDN-1) −
-max(mean_reward(CDN-2), mean_reward(CDN-3))` from the mean of six controls,
-`claimed_reward_gap = mean_accepted_claimed_reward − best_alternative_control_reward`, and
-`falsified_feedback_share = accepted_falsified_CDN1_reports /
-all_accepted_CDN1_learning_reports` from the attack. The latter is the actual
-exposure of the CDN-1 learner; a modified player steered away from CDN-1 may
-send few falsified reports. `control_order_valid` records whether the intended
-reward order was observed. These values make the risk map interpretable for
-its measured baseline, without treating one absolute reward boundary as
-universal.
-
-## Complete the 6 × 6 matrices
-
-The revised [research protocol](research-protocol.md) uses UCB1 and three reward
-sensitivities (lambda 1, 10, 25). It runs two attacks per cell in separately
-randomized passes, with a clean control after each block of six attacks in the
-first pass. From the repository root, run:
-
-```sh
-bash scripts/run_research_matrices.sh low results/research-matrices
-bash scripts/run_research_matrices.sh medium results/research-matrices
-bash scripts/run_research_matrices.sh high results/research-matrices
-```
-
-The first argument selects the reward sensitivity. There is one complete
-matrix per sensitivity: 72 attack runs and six controls (78 total). The
-optional second argument sets the output root. The script saves both randomized
-cell orders, waits for the runner's idle barrier before every execution, and
-resumes successful cells after interruption. Re-running `low` after its first
-36 attacks adds only the second attack for each cell; its six controls are reused.
-Failed runs remain on disk for audit and are retried.
-Each completed invocation writes `D_steer.png`, `D_viewer.png`,
-`Delta_c.png`, `metrics.json`, `calibration.json`, `controls.csv`,
-`controls-summary.csv`, `attack-runs.csv` and `cells.csv` under `plots/ucb1/`.
-`cells.csv` and the figures contain means of the two attacks per cell;
-`attack-runs.csv` and `metrics.json` retain both individual effects. The plotter
-requires six controls and two valid attacks in each of the 36 cells.
-The x-axis uses the same declared TTLB values (90, 200, 340, 530, 800,
-1200 ms) for all three lambda regimes. Per-cell mean accepted rewards and
-costs live in `cells.csv`; individual values are in `attack-runs.csv`. Figures
-show one mean effect number per cell.
-The pilot runs live in a separate directory and are never pooled into a matrix.
-
-The runner waits for NetChaos finalizer cleanup before removing dash-client
-pods. Use the updated NetChaos controller and agent builds; the controller
-must add its finalizer and the agent must delete the leaf qdisc before the
-class. Check that no
-experiment resources remain:
-
-```sh
-kubectl --context kind-kind get networkchaos
-kubectl --context kind-kind get pods -l app=dash-client
-```
+Substitua `high` pelo regime interrompido. O primeiro run aquece os caches
+vazios; runs válidos anteriores são preservados. Se a falha ocorrer antes do
+aquecimento por `Connection refused`, verifique a prontidão dos serviços
+após a recriação dos pods e repita o mesmo comando. Não force a inclusão de
+uma tentativa não `HIT` apenas para completar a matriz.

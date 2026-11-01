@@ -11,10 +11,11 @@ fallback.
 
 Each correlated CMCD `e=rr`, `ot=v` report trains the CDN in the reported media
 URL once. A successful 2xx video response receives the bounded reward
-`d / (d + 5 × ttlb)`, with both values in milliseconds. Reported `rc=0` and HTTP
-4xx/5xx receive zero. A successful fallback response credits the CDN that
-served it. Missing, invalid, or uncorrelated reports do not train. A delayed
-report can train while its session and decision still exist.
+`d / (d + lambda × ttlb)`, with both values in milliseconds and a configurable
+`lambda` (default 5). Reported `rc=0` and HTTP 4xx/5xx receive zero. A
+successful fallback response credits the CDN that served it. Missing, invalid,
+or uncorrelated reports do not train. A delayed report can train while its
+session and decision still exist.
 
 This reward measures reported video delivery relative to segment duration. It
 does not measure viewed quality, stalls, startup delay, or full session QoE.
@@ -23,11 +24,14 @@ epsilon-greedy, and LinUCB use the same reward; LinUCB additionally uses the
 client's buffer level captured at decision time. CDN access logs describe
 server traffic and cache behavior but do not train a second time.
 
-The player attaches `cs_decision` to media URLs to correlate responses with CSS
-decisions. This is a simulator parameter, not a CMCD field. Run and session
-state is temporary in Redis; the runner creates a fresh run ID for each trial
-and does not carry learned models between trials. CDN caches are shared across
-trials unless explicitly reset.
+The player posts CMCD response events over HTTP to the telemetry service,
+which validates and stores run state in Redis; the CSS reads this shared state
+when making subsequent decisions. CDN access logs arrive over UDP and do not
+provide the learning feedback. The player attaches `cs_decision` to media URLs
+to correlate responses with CSS decisions. This is a simulator parameter, not
+a CMCD field. Run and session state is temporary in Redis; the runner creates
+a fresh run ID for each trial and does not carry learned models between trials.
+CDN caches are shared across trials unless explicitly reset.
 
 ## Interpreting results
 
