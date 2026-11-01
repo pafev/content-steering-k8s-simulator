@@ -189,6 +189,16 @@ passou a ignorar esse cabeçalho para os objetos estáticos; a mesma célula foi
 repetida após reconstruir as CDNs e terminou com zero respostas não `HIT`.
 As duas tentativas permanecem nos dados brutos para auditoria.
 
+Após inspeção do mapa `low`, foram selecionadas para repetição as células
+`M=4, ttlb=1200` (`D_steer=+0.1699`) e `M=5, ttlb=1200`
+(`D_steer=+0.0972`), cada uma inicialmente com dois ataques válidos.
+Identificadores originais: `20261030T181203Z-9b1f2eb1`,
+`20261030T204030Z-bb1ad07e` (M=4), `20261030T180220Z-a9470bad` e
+`20261030T211550Z-d4a20393` (M=5). Os quatro diretórios originais foram
+removidos a pedido do pesquisador. A seleção ocorreu após observar o
+desfecho; interpretar as células refeitas como análise exploratória, sem
+atribuir a troca a falha técnica das execuções originais.
+
 Para cada controle `c`, calcular `mu_1,c`, `mu_3,c`, `mu_2,c` das recompensas
 aceitas e **`g_13,c = mu_1,c - mu_3,c` e `g_12,c = mu_1,c - mu_2,c`**.
 No ordenamento esperado, `g_13` é a separação da melhor para a segunda melhor,
