@@ -45,8 +45,10 @@ O runner aguarda a remoção dos pods de clientes e dos objetos NetChaos antes
 da próxima execução e exige três amostras, a cada 5 s, com cada worker Kind
 abaixo de 50% de CPU e 1,5 GiB de memória (prazo de 180 s). Esses limites
 valem para o cluster usado e precisam de nova calibração em outro ambiente.
-Os três regimes foram concluídos com seis linhas em `controls.csv`, 72 em
-`attack-runs.csv` e 36 em `cells.csv` por regime. O procedimento de execução,
+A primeira versão dos três regimes foi concluída com seis linhas em
+`controls.csv`, 72 em `attack-runs.csv` e 36 em `cells.csv` por regime. Após a
+seleção posterior de quatro runs com rebuffer, as matrizes ativas aguardam
+reexecução desses runs para voltar a esse total. O procedimento de execução,
 retomada e recuperação de cache está em [risk-matrix.md](risk-matrix.md).
 
 ## Medidas e cálculo
@@ -84,6 +86,22 @@ formam uma referência **compartilhada** entre células e passagens. A segunda
 passagem ocorre depois deles; possível deriva temporal deve ser considerada
 na interpretação. Os dois efeitos individuais de cada célula permanecem em
 `attack-runs.csv` e `metrics.json`.
+
+Na primeira versão das três matrizes, `D_viewer` era diferente de zero apenas
+em quatro células: `low` (`M=6`, `ttlb=340`), `medium` (`M=3`, `ttlb=90` e
+`530`) e `high` (`M=2`, `ttlb=1200`). Em cada uma, um dos dois ataques teve
+rebuffer medido em clientes honestos; o outro ataque e os seis controles de
+referência tiveram `B=0`. O runner mede `rebuffer_seconds` por eventos
+`waiting`/`stalled` e `playing` do elemento de vídeo e calcula a diferença
+entre snapshots no início e no fim da janela. Esses artefatos comprovam o
+evento observado e a aritmética do mapa, mas não isolam a causa dos episódios
+nem demonstram um efeito causal do envenenamento sobre o rebuffer.
+Esses quatro runs e os plots anteriores foram movidos para
+`results/excluded-rebuffer-20261101/`, com caminhos originais e motivo em
+`selection.json`. A escolha ocorreu **após inspeção do desfecho**: as
+reexecuções substitutas não são confirmações independentes, e a ausência de
+rebuffer nelas não apaga os episódios observados. Conservar e relatar os
+resultados excluídos ao apresentar a matriz final.
 
 ## Custo de tráfego
 

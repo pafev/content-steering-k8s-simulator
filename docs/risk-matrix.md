@@ -16,6 +16,33 @@ recompensas `CDN-1 > CDN-3 > CDN-2`; a configuração de atraso por si só não
 a garante. O runner cria um pod `dash-client` por player e remove os pods e
 objetos NetChaos ao fim de cada execução. Execute somente uma matriz por vez.
 
+### Proveniência dos atrasos
+
+O histórico do repositório (commit `fbda50d`, de 2026-10-07) registra a
+escolha com base em uma hora de pings ICMP IPv4 da [sonda RIPE Atlas
+24628](https://atlas.ripe.net/api/v2/probes/24628/), em conexão Vivo de São
+Paulo, de 02:00 a 03:00 UTC em 2026-10-06. Cada rodada contém três respostas
+ICMP. A mediana das **médias por rodada** nas 15 rodadas foi 3,841 ms para
+[Fastly](https://atlas.ripe.net/api/v2/measurements/177401244/results/?probe_ids=24628&start=1791252000&stop=1791255600),
+4,550 ms para
+[Cloudflare](https://atlas.ripe.net/api/v2/measurements/176906978/results/?probe_ids=24628&start=1791252000&stop=1791255600)
+e 5,161 ms para
+[Amazon](https://atlas.ripe.net/api/v2/measurements/177401165/results/?probe_ids=24628&start=1791252000&stop=1791255600).
+A [lista oficial de medições conhecidas do RIPE Atlas](https://atlas.ripe.net/docs/getting-started/well-known-measurements/)
+confirma os IDs e os respectivos alvos (`fastly.com`, `cloudflare.com` e
+`d1.awsstatic.com`). A [API pública do RIPE Atlas](https://atlas.ripe.net/docs/apis/rest-api-reference/measurements/measurements_results)
+permite filtrar resultados por sonda e intervalo de tempo. Os três resumos
+foram recalculados das séries vinculadas acima; a série da Amazon tem também
+rodadas acima de 50 ms, de modo que sua mediana esconde variação relevante.
+
+Os três operadores são **alvos de medição**, não identidades atribuídas às
+CDNs Nginx do simulador. A correspondência usada para a *ordem* foi
+CDN-1/Fastly, CDN-3/Cloudflare e CDN-2/Amazon. Os valores configurados
+4/9/12 ms são parâmetros de cenário que preservam a ordem dos três resumos;
+não são os RTTs ICMP medidos, nem uma medição de atraso unilateral, TTLB de segmento
+ou latência representativa de toda a rede brasileira. Em particular, o
+Amazon medido foi `d1.awsstatic.com`, não uma CDN brasileira identificada.
+
 Cada matriz tem 36 células (`M=1..6` clientes modificados × `ttlb` declarado
 de 90, 200, 340, 530, 800 ou 1200 ms), dois ataques por célula e seis
 controles: **78 execuções válidas por regime**. As ordens de ataque são
@@ -37,8 +64,19 @@ O segundo argumento opcional define a raiz de saída (padrão:
 `results/research-matrices`). Repetir o mesmo comando retoma a matriz:
 execuções válidas são reutilizadas e falhas são refeitas. O script exige seis
 controles e dois ataques válidos em cada célula antes de produzir os mapas.
+Com todas as execuções válidas já presentes, a mesma invocação refaz os plots
+diretamente dos runs arquivados; não é necessário apagar os PNGs antigos.
 Na primeira passagem, há um controle após cada seis ataques; a segunda
 passagem completa o segundo ataque por célula sem novos controles.
+
+Em 2026-11-01, quatro runs com rebuffer observado em clientes honestos foram
+retirados das matrizes ativas para reexecução: `low` (`M=6`, `ttlb=340`),
+`medium` (`M=3`, `ttlb=90` e `530`) e `high` (`M=2`, `ttlb=1200`). Os runs,
+logs, plots anteriores e `selection.json` estão em
+`results/excluded-rebuffer-20261101/`. Os comandos acima encontrarão uma
+execução válida restante em cada uma dessas células e criarão a segunda.
+Esta foi uma seleção após observar o desfecho; consulte o
+[protocolo](research-protocol.md) antes de interpretar os novos mapas.
 
 Após a conclusão, confira em `results/research-matrices/<regime>/plots/ucb1/`
 as 36 linhas de `cells.csv`, 72 de `attack-runs.csv` e seis de `controls.csv`.
@@ -47,6 +85,13 @@ as 36 linhas de `cells.csv`, 72 de `attack-runs.csv` e seis de `controls.csv`.
 efeitos individuais e caminhos dos runs. `D_steer.png`, `D_viewer.png` e
 `Delta_c.png` exibem as médias das células. O plotter ignora tentativas
 falhas e respostas de mídia que não foram `HIT`.
+Os títulos usam `D` com subscritos `steer` e `viewer`, e `Δ` apenas com o
+subscrito `egress cost`. Os três mapas usam limites de cor fixos entre regimes para
+cada métrica: `D_steer` de −50 a +50 pontos percentuais, `D_viewer` de −0,5 a
++0,5 ponto percentual e `Delta_c` de −0,025 a +0,025 USD/GB. As duas
+primeiras medidas permanecem como frações (0–1) nos CSVs e JSON; só o plot
+as converte para pontos percentuais. As pontas da legenda indicam valores
+fora do limite, enquanto o número na célula conserva o valor calculado.
 
 ## Falha por cache após uma pausa longa
 
