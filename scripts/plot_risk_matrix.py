@@ -11,11 +11,19 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
 import numpy as np
 
 TTLB_VALUES_MS = (90, 200, 340, 530, 800, 1200)
 COUNTS = range(1, 7)
 PRICES_USD_PER_GB = {"cdn-1": 0.045, "cdn-2": 0.11, "cdn-3": 0.10}
+# Fixed limits make the same color mean the same effect in every regime.
+# Values outside a limit retain their numeric annotation; the colorbar marks clipping.
+PLOT_SPECS = {
+    "d_steer": (r"$D_{\mathrm{steer}}$", "pontos percentuais", 100, 50, 1),
+    "d_viewer": (r"$D_{\mathrm{viewer}}$", "pontos percentuais", 100, 0.5, 2),
+    "delta_c": (r"$\Delta_{\mathrm{egress\ cost}}$", "USD/GB", 1, 0.025, 4),
+}
 
 
 def read_run(path):
@@ -103,7 +111,8 @@ def write_table(path, rows, columns):
         writer.writerows(rows)
 
 
-def plot(rows, field, label, output, minimum_scale, decimals):
+def plot(rows, field, output):
+    title, unit, multiplier, limit, decimals = PLOT_SPECS[field]
     grid = np.full((len(COUNTS), len(TTLB_VALUES_MS)), np.nan)
     for count in COUNTS:
         for index, ttlb in enumerate(TTLB_VALUES_MS):
@@ -113,39 +122,53 @@ def plot(rows, field, label, output, minimum_scale, decimals):
                 if row["malicious_count"] == count and row["claimed_ttlb_ms"] == ttlb
             ]
             if values:
-                grid[count - 1, index] = sum(values) / len(values)
-    fig, ax = plt.subplots(figsize=(8.5, 5.7), constrained_layout=True)
+                grid[count - 1, index] = sum(values) / len(values) * multiplier
+    fig, ax = plt.subplots(figsize=(9.2, 5.8), constrained_layout=True)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("#f3f4f6")
     masked = np.ma.masked_invalid(grid)
-    maximum = max(
-        minimum_scale,
-        float(np.nanmax(np.abs(grid))) if np.isfinite(grid).any() else minimum_scale,
-    )
-    image = ax.imshow(masked, cmap="RdBu_r", vmin=-maximum, vmax=maximum, aspect="auto")
-    image.cmap.set_bad("#eeeeee")
+    cmap = LinearSegmentedColormap.from_list(
+        "effect", ["#2166ac", "#f7f7f7", "#b2182b"]
+    ).copy()
+    cmap.set_bad("#e5e7eb")
+    image = ax.imshow(masked, cmap=cmap, vmin=-limit, vmax=limit, aspect="auto")
     ax.set(
         xticks=range(len(TTLB_VALUES_MS)),
         xticklabels=[str(v) for v in TTLB_VALUES_MS],
         yticks=range(len(COUNTS)),
         yticklabels=list(COUNTS),
-        xlabel="Declared CDN-1 TTLB (ms)",
-        ylabel="Malicious players (of 10)",
-        title=label,
+        xlabel="TTLB declarado para CDN-1 (ms)",
+        ylabel="Clientes modificados (de 10)",
     )
+    ax.set_xticks(np.arange(-0.5, len(TTLB_VALUES_MS), 1), minor=True)
+    ax.set_yticks(np.arange(-0.5, len(COUNTS), 1), minor=True)
+    ax.grid(which="minor", color="white", linewidth=2)
+    ax.tick_params(which="minor", bottom=False, left=False)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
     for y, count in enumerate(COUNTS):
         for x, ttlb in enumerate(TTLB_VALUES_MS):
             if np.isfinite(grid[y, x]):
                 value = grid[y, x]
-                shown = "0." + "0" * decimals if abs(value) < 0.5 * 10 ** -decimals else f"{value:+.{decimals}f}"
+                shown = f"{value:+.{decimals}f}" if abs(value) >= 0.5 * 10 ** -decimals else f"{0:.{decimals}f}"
                 ax.text(
                     x,
                     y,
                     shown,
                     ha="center",
                     va="center",
-                    fontsize=8,
-                    color="white" if abs(value) > 0.65 * maximum else "#222222",
+                    fontsize=9,
+                    fontweight="medium",
+                    color="white" if abs(value) > 0.67 * limit else "#20242a",
                 )
-    fig.colorbar(image, ax=ax, label="Attack − control")
+    below = np.isfinite(grid).any() and float(np.nanmin(grid)) < -limit
+    above = np.isfinite(grid).any() and float(np.nanmax(grid)) > limit
+    extend = "both" if below and above else "min" if below else "max" if above else "neither"
+    colorbar = fig.colorbar(image, ax=ax, extend=extend, shrink=0.88, pad=0.035)
+    colorbar.set_ticks(np.linspace(-limit, limit, 5))
+    colorbar.set_label(f"Ataque − controles ({unit})")
+    colorbar.outline.set_visible(False)
+    ax.set_title(title, loc="left", fontsize=15, fontweight="semibold", pad=16)
     fig.savefig(output, dpi=180, bbox_inches="tight", pad_inches=0.15)
     plt.close(fig)
 
@@ -360,22 +383,10 @@ def main():
                  "mean_accepted_claimed_reward", "g_13", "g_12",
                  "d_steer", "d_viewer", "c_attack", "delta_c",
                  "observed_cost_usd", "falsified_feedback_share"])
-    plot(
-        cell_rows,
-        "d_steer",
-        "D_steer: delayed-CDN priority fraction",
-        output / "D_steer.png",
-        0.05, 3,
-    )
-    plot(
-        cell_rows,
-        "d_viewer",
-        "D_viewer: buffering fraction",
-        output / "D_viewer.png",
-        0.01, 3,
-    )
-    plot(cell_rows, "delta_c", "Delta_c: egress cost (USD/GB)",
-         output / "Delta_c.png", 0.005, 4)
+    for field, filename in (("d_steer", "D_steer.png"),
+                            ("d_viewer", "D_viewer.png"),
+                            ("delta_c", "Delta_c.png")):
+        plot(cell_rows, field, output / filename)
     print(f"Wrote {len(cell_rows)} cell averages from {len(rows)} attack runs to {output}")
     if any(not row["control_order_valid"] for row in rows):
         print(
