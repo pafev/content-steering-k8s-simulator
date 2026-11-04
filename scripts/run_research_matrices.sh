@@ -2,27 +2,35 @@
 # One UCB1 risk matrix per reward regime: two attacks per cell, six controls.
 set -euo pipefail
 
-if (( $# < 1 || $# > 2 )); then
-  echo "Usage: bash scripts/run_research_matrices.sh low|medium|high [output-root]" >&2
+if (($# < 1 || $# > 3)); then
+  echo "Usage: bash scripts/run_research_matrices.sh low|medium|high [output-root] [fault-manifest]" >&2
   exit 2
 fi
 label="$1"
 case "$label" in
-  low) lambda=1 ;;
-  medium) lambda=10 ;;
-  high) lambda=25 ;;
-  *) echo "Unknown regime: $label (choose low, medium or high)" >&2; exit 2 ;;
+low) lambda=1 ;;
+medium) lambda=10 ;;
+high) lambda=25 ;;
+*)
+  echo "Unknown regime: $label (choose low, medium or high)" >&2
+  exit 2
+  ;;
 esac
-rep=1  # Internal identifier retained for matching the existing partial matrix.
+rep=1 # Internal identifier retained for matching the existing partial matrix.
 root="${2:-results/research-matrices}"
 out="$root/$label"
 runner=.venv/bin/python
-fault=manifests/risk-matrix-netchaos.yaml
+fault="${3:-manifests/risk-matrix-netchaos.yaml}"
+if [[ ! -f "$fault" ]]; then
+  echo "Missing NetChaos manifest: $fault" >&2
+  exit 2
+fi
 
 has_run() {
-  "$runner" - "$out" "$rep" "$lambda" "$1" "$2" "$3" "$4" <<'PY'
-import json, pathlib, sys
-root, rep, lam, kind, count, ttlb, target = sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), sys.argv[4], int(sys.argv[5]), int(sys.argv[6]), int(sys.argv[7])
+  "$runner" - "$out" "$rep" "$lambda" "$1" "$2" "$3" "$4" "$fault" <<'PY'
+import hashlib, json, pathlib, sys
+root, rep, lam, kind, count, ttlb, target, fault = sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), sys.argv[4], int(sys.argv[5]), int(sys.argv[6]), int(sys.argv[7]), pathlib.Path(sys.argv[8])
+fault_hash = hashlib.sha256(fault.read_bytes()).hexdigest()
 matches = 0
 for path in pathlib.Path(root).glob('*/multi-*/summary.json'):
     try:
@@ -34,6 +42,7 @@ for path in pathlib.Path(root).glob('*/multi-*/summary.json'):
     if (summary.get('success') and not cache.get('cached_non_hit_responses')
         and cfg['replicate'] == rep
         and cfg.get('reward_lambda', 5) == lam
+        and cfg.get('fault_sha256') == fault_hash
         and ((kind == 'control' and cfg['malicious_count'] == 0)
              or (kind == 'attack' and cfg['malicious_count'] == count
                  and cfg.get('attack_ttlb') == ttlb))):
@@ -43,9 +52,10 @@ PY
 }
 
 check_control() {
-  "$runner" - "$out" "$rep" "$lambda" "$1" <<'PY'
-import json, pathlib, sys
-root, rep, lam, index = pathlib.Path(sys.argv[1]), int(sys.argv[2]), float(sys.argv[3]), int(sys.argv[4])
+  "$runner" - "$out" "$rep" "$lambda" "$1" "$fault" <<'PY'
+import hashlib, json, pathlib, sys
+root, rep, lam, index, fault = pathlib.Path(sys.argv[1]), int(sys.argv[2]), float(sys.argv[3]), int(sys.argv[4]), sys.argv[5]
+fault_hash = hashlib.sha256(pathlib.Path(fault).read_bytes()).hexdigest()
 controls = []
 for path in root.glob('*/multi-*/summary.json'):
     summary = json.loads(path.read_text())
@@ -53,6 +63,7 @@ for path in root.glob('*/multi-*/summary.json'):
     cache = json.loads((path.parent / 'cache-validation.json').read_text())
     if (summary.get('success') and not cache.get('cached_non_hit_responses')
         and cfg['replicate'] == rep and cfg.get('reward_lambda', 5) == lam
+        and cfg.get('fault_sha256') == fault_hash
         and cfg['malicious_count'] == 0):
         controls.append((path, summary))
 controls.sort(key=lambda item: item[0].parent.parent.name)
@@ -61,7 +72,8 @@ if len(controls) < index:
 path, summary = controls[index - 1]
 values = summary['delivery_calibration']
 rewards = {p: values[p]['mean_learning_reward'] for p in ('cdn-1', 'cdn-2', 'cdn-3')}
-if not summary['success'] or not rewards['cdn-1'] > rewards['cdn-3'] > rewards['cdn-2']:
+expected = rewards['cdn-1'] > max(rewards['cdn-2'], rewards['cdn-3'])
+if not summary['success'] or not expected:
     raise SystemExit(f'Control failed or CDN reward order changed: {path} {rewards}')
 print(f'Control accepted: {path} {rewards}')
 PY
@@ -110,9 +122,9 @@ for pass in 1 2; do
         --malicious-count "$count" --attack-ttlb "$ttlb" \
         --fault-manifest "$fault" --output "$out" \
         "${warmup[@]}"
-      ((started+=1))
+      ((started += 1))
     fi
-    ((completed+=1))
+    ((completed += 1))
     if ((pass == 1 && completed % 6 == 0)); then
       if ! has_run control 0 0 "$((completed / 6))"; then
         warmup=()
@@ -122,11 +134,11 @@ for pass in 1 2; do
           --require-fresh-cache \
           --replicate "$rep" --fault-manifest "$fault" \
           --output "$out" "${warmup[@]}"
-        ((started+=1))
+        ((started += 1))
       fi
       check_control "$((completed / 6))"
     fi
-  done < "$current_order"
+  done <"$current_order"
 done
 "$runner" scripts/plot_risk_matrix.py "$out" --strategy ucb1 \
   --replicate "$rep" --output "$out/plots/ucb1" --require-complete
