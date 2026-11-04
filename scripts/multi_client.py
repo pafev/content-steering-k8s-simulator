@@ -745,7 +745,7 @@ def observe(playwright, args, strategy, output, warmup=None):
                 query.update(
                     attack_cdn=args.malicious_cdn,
                     attack_ttlb=args.attack_ttlb,
-                    attack_enabled="false",
+                    attack_enabled="true" if args.attack_from_start else "false",
                 )
             sid = start_player(page, query)
             if role == "modified":
@@ -760,7 +760,7 @@ def observe(playwright, args, strategy, output, warmup=None):
         deadline = run_start + args.seconds
         observation_end = round(deadline - started, 3)
         measurement_at = run_start + args.measurement_start
-        attack_at = run_start + args.attack_delay if modified else None
+        attack_at = run_start + args.attack_delay if modified and not args.attack_from_start else None
         observation_start = None
         viewer_initial = None
         cdn_bytes_initial = None
@@ -1040,6 +1040,8 @@ def main():
         default=0,
         help="Seconds from the start of an attack run until false telemetry begins",
     )
+    parser.add_argument("--attack-from-start", action="store_true",
+                        help="Enable false telemetry as each modified player starts")
     parser.add_argument(
         "--measurement-start",
         type=float,
@@ -1125,6 +1127,8 @@ def main():
         parser.error("attack-ttlb requires malicious-count")
     if not args.malicious_count and args.attack_delay:
         parser.error("attack-delay requires malicious-count")
+    if args.attack_from_start and (not args.malicious_count or args.attack_delay):
+        parser.error("attack-from-start requires malicious-count and no attack-delay")
     if args.fault_manifest and not args.fault_manifest.is_file():
         parser.error("--fault-manifest must point to a file")
     args.fault_sha256 = (
