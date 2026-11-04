@@ -69,6 +69,14 @@ diretamente dos runs arquivados; não é necessário apagar os PNGs antigos.
 Na primeira passagem, há um controle após cada seis ataques; a segunda
 passagem completa o segundo ataque por célula sem novos controles.
 
+Um terceiro argumento opcional substitui o manifesto NetChaos padrão. Use uma
+raiz de saída exclusiva para cada cenário de rede; controle e ataque devem
+usar o mesmo manifesto. A matriz continua com dez clientes, UCB1, 120 s,
+seis controles e dois ataques por célula. Valide o cenário com runs isolados
+antes de executar a matriz completa. No manifesto padrão, cada controle exige
+`CDN-1 > CDN-3 > CDN-2` em recompensa; com manifesto alternativo, exige apenas
+que a CDN-1 seja a melhor das três.
+
 Em 2026-11-01, quatro runs com rebuffer observado em clientes honestos foram
 retirados das matrizes ativas para reexecução: `low` (`M=6`, `ttlb=340`),
 `medium` (`M=3`, `ttlb=90` e `530`) e `high` (`M=2`, `ttlb=1200`). Os runs,
