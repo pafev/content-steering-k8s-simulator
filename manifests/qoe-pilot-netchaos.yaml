@@ -1,0 +1,43 @@
+# QoE pilot: CDN-1 remains good; CDN-2 and CDN-3 have added response delay.
+# Calibrate with isolated clean and attack runs before using this in a matrix.
+apiVersion: net-chaos-simulator.pafev.dev/v1
+kind: NetworkChaos
+metadata:
+  name: content-steering-cdn1-delay
+  namespace: default
+spec:
+  sourceSelector:
+    name: cdn-1-edge-1
+  targetPodSelector:
+    labels:
+      matchLabels:
+        app: dash-client
+  delay: 4ms
+---
+apiVersion: net-chaos-simulator.pafev.dev/v1
+kind: NetworkChaos
+metadata:
+  name: content-steering-cdn2-delay
+  namespace: default
+spec:
+  sourceSelector:
+    name: cdn-2-edge-1
+  targetPodSelector:
+    labels:
+      matchLabels:
+        app: dash-client
+  delay: 850ms
+---
+apiVersion: net-chaos-simulator.pafev.dev/v1
+kind: NetworkChaos
+metadata:
+  name: content-steering-cdn3-delay
+  namespace: default
+spec:
+  sourceSelector:
+    name: cdn-3-edge-1
+  targetPodSelector:
+    labels:
+      matchLabels:
+        app: dash-client
+  delay: 700ms
