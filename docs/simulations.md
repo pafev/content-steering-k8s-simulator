@@ -64,6 +64,11 @@ successful CDN-1 video responses, it declares `ttlb=800 ms`. The reported
 delivery reward is then computed from `d/(d+lambda×ttlb)`; with `d=4000 ms`
 and the default `lambda=5`, it is 0.5.
 
+For a separate pilot that poisons learning from the first modified-player
+response, use `--attack-from-start` with `--malicious-count` and omit
+`--attack-delay`. This changes the attack timing and should not be mixed with
+the 40 s delayed risk matrices.
+
 The run's `modified-players.json` records original and claimed timing,
 matching responses, and telemetry ingestion results. The role label is used
 only by the runner, not by CSS policy.
