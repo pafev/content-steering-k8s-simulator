@@ -90,15 +90,14 @@ Após a conclusão, confira em `results/research-matrices/<regime>/plots/ucb1/`
 as 36 linhas de `cells.csv`, 72 de `attack-runs.csv` e seis de `controls.csv`.
 `controls-summary.csv` resume os gaps de recompensa e a prioridade da CDN-1;
 `calibration.json` mostra a calibração detalhada. `metrics.json` preserva
-efeitos individuais e caminhos dos runs. `D_steer.png`, `D_viewer.png` e
-`Delta_c.png` exibem as médias das células. O plotter ignora tentativas
+efeitos individuais e caminhos dos runs. `D_steer.png` e `Delta_c.png`
+exibem as médias das células. O plotter ignora tentativas
 falhas e respostas de mídia que não foram `HIT`.
-Os títulos usam `D` com subscritos `steer` e `viewer`, e `Δ` apenas com o
-subscrito `egress cost`. Os três mapas usam limites de cor fixos entre regimes para
-cada métrica: `D_steer` de −50 a +50 pontos percentuais, `D_viewer` de −0,5 a
-+0,5 ponto percentual e `Delta_c` de −0,025 a +0,025 USD/GB. As duas
-primeiras medidas permanecem como frações (0–1) nos CSVs e JSON; só o plot
-as converte para pontos percentuais. As pontas da legenda indicam valores
+Os títulos usam `D` com subscrito `steer` e `Δ` com subscrito `egress cost`.
+Os dois mapas usam limites de cor fixos entre regimes: `D_steer` de −50 a
++50 pontos percentuais e `Delta_c` de −0,025 a +0,025 USD/GB. `D_steer`
+permanece como fração (0–1) nos CSVs e JSON; só o plot o converte para pontos
+percentuais. As pontas da legenda indicam valores
 fora do limite, enquanto o número na célula conserva o valor calculado.
 
 ## Falha por cache após uma pausa longa

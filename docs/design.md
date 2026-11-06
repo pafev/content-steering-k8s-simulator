@@ -18,7 +18,8 @@ or uncorrelated reports do not train. A delayed report can train while its
 session and decision still exist.
 
 This reward measures reported video delivery relative to segment duration. It
-does not measure viewed quality, stalls, startup delay, or full session QoE.
+does not use viewed quality, stalls, startup delay, or full session QoE. The
+research runner records separate playback outcomes; see [simulations.md](simulations.md).
 CMCD and Content Steering do not prescribe this formula. UCB1,
 epsilon-greedy, and LinUCB use the same reward; LinUCB additionally uses the
 client's buffer level captured at decision time. CDN access logs describe

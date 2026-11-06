@@ -68,33 +68,46 @@ honestos `M+1..10`, tanto nos ataques quanto em cada controle:
 
 - `P`: média, entre esses clientes, das frações individuais de respostas CSS
   com CDN-2 ou CDN-3 em primeira prioridade.
-- `B`: média, entre esses clientes, de
-  `rebuffer_seconds / (played_seconds + rebuffer_seconds)`.
 
 ```text
 D_steer,i  = P_attack,i − mean(P_control,c; c=1..6)
-D_viewer,i = B_attack,i − mean(B_control,c; c=1..6)
 Efeito da célula = mean(efeito_ataque_1, efeito_ataque_2)
 ```
 
 `D_steer` é o desfecho primário: mudança na prioridade do CSS para clientes
-honestos, não no caminho efetivamente usado após fallback. `D_viewer` é o
-desfecho de reprodução; pode ser zero mesmo com mudança de prioridade quando
-há buffer suficiente. A execução é a unidade experimental: clientes e
+honestos, não no caminho efetivamente usado após fallback. A execução é a
+unidade experimental: clientes e
 segmentos de uma execução não são réplicas independentes. Os seis controles
 formam uma referência **compartilhada** entre células e passagens. A segunda
 passagem ocorre depois deles; possível deriva temporal deve ser considerada
 na interpretação. Os dois efeitos individuais de cada célula permanecem em
 `attack-runs.csv` e `metrics.json`.
 
-Na primeira versão das três matrizes, `D_viewer` era diferente de zero apenas
-em quatro células: `low` (`M=6`, `ttlb=340`), `medium` (`M=3`, `ttlb=90` e
+**Estudo prospectivo de QoE:** as matrizes de steering e custo não definem o
+desfecho de experiência. O novo estudo fixa `lambda=10` e ataque após 40 s, mede
+rebuffer em segundos, fração da janela sem progresso, pausa, falha terminal,
+bitrate exibido ponderado pelo tempo e um índice operacional composto. Os
+primeiros runs são pilotos em diretório próprio para escolher um cenário de
+latência e verificar estabilidade. O estudo de dose fixa `M=3`, CDN-1 como
+alvo, UCB1, `lambda=10`, dez clientes, 120 s por run e ataque após 40 s.
+Varia apenas o TTLB forjado. São seis controles compartilhados e dois ataques
+independentes por TTLB. Em cada run, o índice composto de QoE é a média dos
+sete slots honestos (4–10); a comparação por dose é a média dos dois ataques
+menos a média dos seis controles. Tempo sem progresso, rebuffer, qualidade
+exibida e falhas terminais explicam a variação do índice. Os dois ataques
+por dose e seus valores individuais devem permanecer visíveis: essa amostra
+não sustenta um limiar exato nem intervalo de confiança estreito. Pilotos
+não são réplicas finais. A grade inicial baseia-se no TTLB **medido** das
+CDNs alternativas no piloto 850/700 ms; a latência configurada não é TTLB.
+
+Na primeira versão das três matrizes, houve rebuffer em quatro células:
+`low` (`M=6`, `ttlb=340`), `medium` (`M=3`, `ttlb=90` e
 `530`) e `high` (`M=2`, `ttlb=1200`). Em cada uma, um dos dois ataques teve
 rebuffer medido em clientes honestos; o outro ataque e os seis controles de
-referência tiveram `B=0`. O runner mede `rebuffer_seconds` por eventos
+referência tiveram zero rebuffer. O runner antigo media `rebuffer_seconds` por eventos
 `waiting`/`stalled` e `playing` do elemento de vídeo e calcula a diferença
 entre snapshots no início e no fim da janela. Esses artefatos comprovam o
-evento observado e a aritmética do mapa, mas não isolam a causa dos episódios
+evento observado, mas não isolam a causa dos episódios
 nem demonstram um efeito causal do envenenamento sobre o rebuffer.
 Esses quatro runs e os plots anteriores foram movidos para
 `results/excluded-rebuffer-20261101/`, com caminhos originais e motivo em
@@ -134,7 +147,7 @@ modelo.
 
 ## Entrega e limites de interpretação
 
-Cada regime possui `D_steer.png`, `D_viewer.png`, `Delta_c.png`,
+Cada regime possui `D_steer.png`, `Delta_c.png`,
 `controls.csv`, `controls-summary.csv`, `attack-runs.csv`, `cells.csv`,
 `calibration.json` e `metrics.json` em
 `results/research-matrices/<regime>/plots/ucb1/`. Os diretórios datados
