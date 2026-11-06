@@ -16,6 +16,8 @@ from urllib.request import Request, urlopen
 import uuid
 import xml.etree.ElementTree as ET
 
+from viewer_qoe import summarize as summarize_viewer_qoe
+
 ROOT = Path(__file__).resolve().parents[1]
 STRATEGIES = ("ucb1", "linucb", "epsilon_greedy", "fixed", "random")
 BROWSER_ACCEPT_ENCODING = "gzip, deflate, br, zstd"
@@ -682,21 +684,60 @@ def observe(playwright, args, strategy, output, warmup=None):
         page.evaluate("""() => {
             const video = document.querySelector('video');
             const metric = {requested: performance.now(), started: null,
-                            waiting: null, rebufferMs: 0};
+                            waiting: null, rebufferMs: 0, qualityKbps: null,
+                            events: [], ticks: [], dashTapAttached: false};
+            const event = (type, extra = {}) => metric.events.push({
+                ms: performance.now(), type, time: video.currentTime,
+                paused: video.paused, ended: video.ended, ...extra
+            });
+            const nativePause = video.pause.bind(video);
+            video.pause = (...args) => {
+                event('pause_call', {stack: new Error().stack});
+                return nativePause(...args);
+            };
+            const tick = () => metric.ticks.push({
+                ms: performance.now(), time: video.currentTime,
+                paused: video.paused, ended: video.ended,
+                quality_kbps: metric.qualityKbps
+            });
             const wait = () => {
                 if (metric.started !== null && metric.waiting === null && !video.paused)
                     metric.waiting = performance.now();
             };
-            video.addEventListener('waiting', wait);
-            video.addEventListener('stalled', wait);
+            const closeWait = () => {
+                if (metric.waiting !== null) {
+                    metric.rebufferMs += performance.now() - metric.waiting;
+                    metric.waiting = null;
+                }
+            };
+            video.addEventListener('waiting', () => { event('waiting'); wait(); });
+            video.addEventListener('stalled', () => event('stalled'));
             video.addEventListener('playing', () => {
                 const now = performance.now();
                 if (metric.started === null) metric.started = now;
-                if (metric.waiting !== null) {
-                    metric.rebufferMs += now - metric.waiting;
-                    metric.waiting = null;
-                }
+                closeWait();
+                event('playing');
             });
+            video.addEventListener('pause', () => { closeWait(); event('pause'); });
+            video.addEventListener('ended', () => { closeWait(); event('ended'); });
+            video.addEventListener('error', () => {
+                closeWait();
+                event('media_error', {code: video.error?.code ?? null,
+                                      message: video.error?.message ?? null});
+            });
+            window.__viewerTap = (player) => {
+                metric.dashTapAttached = true;
+                player.on(dashjs.MediaPlayer.events.QUALITY_CHANGE_RENDERED, (e) => {
+                    if (e.mediaType !== 'video') return;
+                    metric.qualityKbps = e.newRepresentation?.bitrateInKbit ?? null;
+                    event('quality_rendered', {quality_kbps: metric.qualityKbps});
+                });
+                player.on(dashjs.MediaPlayer.events.ERROR, (e) =>
+                    event('dash_error', {code: e.error?.code ?? null,
+                                         message: e.error?.message ?? null}));
+            };
+            tick();
+            metric.timer = setInterval(tick, 500);
             window.__viewerMetric = metric;
         }""")
         page.get_by_role("button", name="Load video").click()
@@ -712,9 +753,21 @@ def observe(playwright, args, strategy, output, warmup=None):
         return page.evaluate("""() => {
             const m = window.__viewerMetric;
             const now = performance.now();
+            m.ticks.push({ms: now, time: document.querySelector('video').currentTime,
+                          paused: document.querySelector('video').paused,
+                          ended: document.querySelector('video').ended,
+                          quality_kbps: m.qualityKbps});
             return {playback: document.querySelector('video').currentTime,
                     rebuffer_ms: m.rebufferMs + (m.waiting === null ? 0 : now - m.waiting),
-                    startup_ms: m.started === null ? null : m.started - m.requested};
+                    startup_ms: m.started === null ? null : m.started - m.requested,
+                    ms: now};
+        }""")
+
+    def viewer_trace(page):
+        return page.evaluate("""() => {
+            const m = window.__viewerMetric;
+            return m ? {events: m.events, ticks: m.ticks,
+                        dash_tap_attached: m.dashTapAttached} : null;
         }""")
 
     try:
@@ -822,6 +875,11 @@ def observe(playwright, args, strategy, output, warmup=None):
 
         feedback = sum(int(model.get("n", 0)) for model in state["model"].values())
         viewer_final = [viewer_snapshot(page) for page in pages]
+        viewer_traces = [viewer_trace(page) for page in pages]
+        (directory / "viewer-traces.json").write_text(
+            json.dumps({str(session["client"]): trace for session, trace in
+                        zip(sessions, viewer_traces)}, indent=2) + "\n"
+        )
         for page in pages:
             page.evaluate("document.querySelector('video').pause()")
         # Stop new playback requests, then let already emitted CDN UDP logs reach Redis.
@@ -836,32 +894,37 @@ def observe(playwright, args, strategy, output, warmup=None):
             for path in cdn_bytes_final
         }
         viewers = []
-        for session, initial, final in zip(sessions, viewer_initial, viewer_final):
-            played = max(0.0, final["playback"] - initial["playback"])
+        for session, initial, final, trace in zip(
+            sessions, viewer_initial, viewer_final, viewer_traces
+        ):
             rebuffer = max(0.0, (final["rebuffer_ms"] - initial["rebuffer_ms"]) / 1000)
             viewers.append(
                 {
                     **session,
-                    "played_seconds": played,
                     "rebuffer_seconds": rebuffer,
-                    "buffering_ratio": rebuffer / (played + rebuffer)
-                    if played + rebuffer
-                    else None,
                     "startup_ms": final["startup_ms"],
+                    "qoe": summarize_viewer_qoe(trace, initial["ms"], final["ms"]),
                 }
             )
         problems = []
+        if any(not trace["dash_tap_attached"] for trace in viewer_traces):
+            problems.append("Client image lacks dash.js viewer instrumentation")
         if errors:
             problems.append("Browser JavaScript errors occurred")
         if len({session["sid"] for session in sessions}) != args.clients:
             problems.append("Client sessions are not unique")
-        if any(client["time"] <= 0 or client["error"] for client in clients):
+        if any(client["time"] <= 0 or client["error"] for client in clients) and not args.allow_viewer_failure:
             problems.append("At least one client did not play successfully")
-        if any(
-            viewer["buffering_ratio"] is None or viewer["startup_ms"] is None
-            for viewer in viewers
-        ):
+        if any(viewer["qoe"]["media_progress_seconds"] <= 0 or
+               viewer["startup_ms"] is None for viewer in viewers
+               ) and not args.allow_viewer_failure:
             problems.append("At least one player has incomplete playback measurements")
+        if args.allow_viewer_failure and any(client["ended"] for client in clients):
+            problems.append("A player reached the natural end of the video")
+        if args.allow_viewer_failure and any(
+            viewer["startup_ms"] is None for viewer in viewers
+        ):
+            problems.append("At least one player never started playback")
         if not feedback:
             problems.append("No accepted learning feedback")
         if unexpected_misses:
@@ -1002,6 +1065,16 @@ def observe(playwright, args, strategy, output, warmup=None):
             raise RuntimeError("; ".join(problems))
         return {"run_id": run_id, "summary": str(directory / "summary.json")}
     except Exception as error:
+        traces = {}
+        for index, page in enumerate(pages, 1):
+            try:
+                traces[str(index)] = viewer_trace(page)
+            except Exception:
+                pass
+        if traces:
+            (directory / "viewer-traces.json").write_text(
+                json.dumps(traces, indent=2) + "\n"
+            )
         (directory / "failure.json").write_text(
             json.dumps(
                 {"error": str(error), "sessions": sessions, "errors": errors}, indent=2
@@ -1064,6 +1137,8 @@ def main():
     parser.add_argument("--skip-warmup", action="store_true")
     parser.add_argument("--require-fresh-cache", action="store_true",
                         help="Reject STALE/UPDATING/REVALIDATED media in research runs")
+    parser.add_argument("--allow-viewer-failure", action="store_true",
+                        help="Record post-start pause or fatal error as a QoE outcome")
     parser.add_argument(
         "--output", type=Path, default=ROOT / "results" / "multi-client"
     )
