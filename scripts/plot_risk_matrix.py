@@ -21,7 +21,6 @@ PRICES_USD_PER_GB = {"cdn-1": 0.045, "cdn-2": 0.11, "cdn-3": 0.10}
 # Values outside a limit retain their numeric annotation; the colorbar marks clipping.
 PLOT_SPECS = {
     "d_steer": (r"$D_{\mathrm{steer}}$", "pontos percentuais", 100, 50, 1),
-    "d_viewer": (r"$D_{\mathrm{viewer}}$", "pontos percentuais", 100, 0.5, 2),
     "delta_c": (r"$\Delta_{\mathrm{egress\ cost}}$", "USD/GB", 1, 0.025, 4),
 }
 
@@ -72,11 +71,6 @@ def steering_probability(run, clients):
             / len(priorities)
         )
     return sum(values) / len(values)
-
-
-def buffering_ratio(run, clients):
-    viewers = {viewer["client"]: viewer for viewer in run["summary"]["viewers"]}
-    return sum(viewers[client]["buffering_ratio"] for client in clients) / len(clients)
 
 
 def mean_reward(run):
@@ -253,8 +247,6 @@ def main():
         clients = range(count + 1, 11)
         p_control = sum(steering_probability(c, clients) for c in matched) / len(matched)
         p_attack = steering_probability(attack, clients)
-        b_control = sum(buffering_ratio(c, clients) for c in matched) / len(matched)
-        b_attack = buffering_ratio(attack, clients)
         means = {p: sum(mean_reward(c)[p] for c in matched) / len(matched)
                  for p in PRICES_USD_PER_GB}
         best_alternative = max(means["cdn-2"], means["cdn-3"])
@@ -277,9 +269,6 @@ def main():
                 p_control=p_control,
                 p_attack=p_attack,
                 d_steer=p_attack - p_control,
-                b_control=b_control,
-                b_attack=b_attack,
-                d_viewer=b_attack - b_control,
                 c_control=c_control,
                 c_attack=c_attack,
                 delta_c=c_attack - c_control,
@@ -360,7 +349,7 @@ def main():
     (output / "metrics.json").write_text(json.dumps(rows, indent=2) + "\n")
     columns = ["replicate", "malicious_count", "claimed_ttlb_ms",
                "mean_accepted_claimed_reward", "g_13", "g_12",
-               "d_steer", "d_viewer", "c_attack", "delta_c",
+               "d_steer", "c_attack", "delta_c",
                "observed_cost_usd", "falsified_feedback_share", "attack"]
     write_table(output / "attack-runs.csv", rows, columns)
     groups = {}
@@ -369,7 +358,7 @@ def main():
         groups.setdefault(key, []).append(row)
     cell_rows = []
     averaged = ("mean_accepted_claimed_reward", "g_13", "g_12", "d_steer",
-                "d_viewer", "c_attack", "delta_c", "observed_cost_usd",
+                "c_attack", "delta_c", "observed_cost_usd",
                 "falsified_feedback_share")
     for key, group in sorted(groups.items()):
         cell = dict(replicate=key[0], malicious_count=key[1],
@@ -381,10 +370,9 @@ def main():
                 ["replicate", "malicious_count", "claimed_ttlb_ms",
                  "attack_runs",
                  "mean_accepted_claimed_reward", "g_13", "g_12",
-                 "d_steer", "d_viewer", "c_attack", "delta_c",
+                 "d_steer", "c_attack", "delta_c",
                  "observed_cost_usd", "falsified_feedback_share"])
     for field, filename in (("d_steer", "D_steer.png"),
-                            ("d_viewer", "D_viewer.png"),
                             ("delta_c", "Delta_c.png")):
         plot(cell_rows, field, output / filename)
     print(f"Wrote {len(cell_rows)} cell averages from {len(rows)} attack runs to {output}")
