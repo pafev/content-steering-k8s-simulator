@@ -77,6 +77,8 @@ async function load(event) {
     return;
   }
   player = dashjs.MediaPlayer().create();
+  // The research runner may attach playback event instrumentation.
+  window.__viewerTap?.(player);
   player.addRequestInterceptor((request) => {
     const url = new URL(request.url, location.href);
     if (url.hostname === steeringHost && url.pathname === "/manifest.json") {
