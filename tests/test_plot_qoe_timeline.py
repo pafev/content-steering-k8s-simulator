@@ -13,6 +13,7 @@ def make_run(root, name, attack):
     config = dict(clients=10, reward_lambda=10, fault_sha256="same-fault",
                   mpd="same-video", seconds=120, measurement_start=40,
                   allow_viewer_failure=True, malicious_count=6 if attack else 0,
+                  max_video_kbps=3000,
                   attack_ttlb=12000 if attack else None,
                   attack_delay=40 if attack else 0, attack_from_start=False)
     viewers = []

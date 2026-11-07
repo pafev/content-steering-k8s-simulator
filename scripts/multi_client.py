@@ -34,8 +34,13 @@ def _gib(value):
     match = re.fullmatch(r"([\d.]+)(B|KiB|MiB|GiB|TiB)", value.strip())
     if not match:
         raise ValueError(f"Unexpected Docker memory value: {value}")
-    scale = {"B": 1 / 1024**3, "KiB": 1 / 1024**2,
-             "MiB": 1 / 1024, "GiB": 1, "TiB": 1024}
+    scale = {
+        "B": 1 / 1024**3,
+        "KiB": 1 / 1024**2,
+        "MiB": 1 / 1024,
+        "GiB": 1,
+        "TiB": 1024,
+    }
     return float(match[1]) * scale[match[2]]
 
 
@@ -45,21 +50,57 @@ def wait_for_idle(output):
     consecutive = 0
     readings = []
     while time.monotonic() < deadline:
-        pods = subprocess.run(
-            ["kubectl", "--context", "kind-kind", "get", "pods", "-l",
-             "app=dash-client", "-o", "name"],
-            capture_output=True, text=True, check=True,
-        ).stdout.strip().splitlines()
-        faults = subprocess.run(
-            ["kubectl", "--context", "kind-kind", "get", "networkchaos",
-             "-o", "name"],
-            capture_output=True, text=True, check=True,
-        ).stdout.strip().splitlines()
+        pods = (
+            subprocess.run(
+                [
+                    "kubectl",
+                    "--context",
+                    "kind-kind",
+                    "get",
+                    "pods",
+                    "-l",
+                    "app=dash-client",
+                    "-o",
+                    "name",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            .stdout.strip()
+            .splitlines()
+        )
+        faults = (
+            subprocess.run(
+                [
+                    "kubectl",
+                    "--context",
+                    "kind-kind",
+                    "get",
+                    "networkchaos",
+                    "-o",
+                    "name",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            .stdout.strip()
+            .splitlines()
+        )
         raw = subprocess.run(
-            ["docker", "stats", "--no-stream", "--format",
-             "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}",
-             "kind-worker", "kind-worker2"],
-            capture_output=True, text=True, check=True,
+            [
+                "docker",
+                "stats",
+                "--no-stream",
+                "--format",
+                "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}",
+                "kind-worker",
+                "kind-worker2",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout
         workers = {}
         for line in raw.splitlines():
@@ -70,39 +111,73 @@ def wait_for_idle(output):
             }
         if set(workers) != {"kind-worker", "kind-worker2"}:
             raise RuntimeError(f"Could not read both Kind worker resources: {raw!r}")
-        settled = not pods and not faults and all(
-            v["cpu_percent"] <= IDLE_CPU_PERCENT
-            and v["memory_gib"] <= IDLE_MEMORY_GIB
-            for v in workers.values()
+        settled = (
+            not pods
+            and not faults
+            and all(
+                v["cpu_percent"] <= IDLE_CPU_PERCENT
+                and v["memory_gib"] <= IDLE_MEMORY_GIB
+                for v in workers.values()
+            )
         )
-        readings.append(dict(timestamp=datetime.now(timezone.utc).isoformat(),
-                             pods=pods, networkchaos=faults, workers=workers,
-                             settled=settled))
+        readings.append(
+            dict(
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                pods=pods,
+                networkchaos=faults,
+                workers=workers,
+                settled=settled,
+            )
+        )
         consecutive = consecutive + 1 if settled else 0
         if consecutive >= IDLE_SAMPLES:
             break
         time.sleep(IDLE_INTERVAL_SECONDS)
-    result = dict(cpu_limit_percent=IDLE_CPU_PERCENT,
-                  memory_limit_gib=IDLE_MEMORY_GIB,
-                  consecutive_samples=IDLE_SAMPLES,
-                  interval_seconds=IDLE_INTERVAL_SECONDS,
-                  passed=consecutive >= IDLE_SAMPLES, readings=readings)
+    result = dict(
+        cpu_limit_percent=IDLE_CPU_PERCENT,
+        memory_limit_gib=IDLE_MEMORY_GIB,
+        consecutive_samples=IDLE_SAMPLES,
+        interval_seconds=IDLE_INTERVAL_SECONDS,
+        passed=consecutive >= IDLE_SAMPLES,
+        readings=readings,
+    )
     (output / "idle-check.json").write_text(json.dumps(result, indent=2) + "\n")
     if not result["passed"]:
-        raise RuntimeError(f"Kind workers did not settle; see {output / 'idle-check.json'}")
+        raise RuntimeError(
+            f"Kind workers did not settle; see {output / 'idle-check.json'}"
+        )
 
 
 def wait_for_services():
     """Do not start port-forwards while a CDN or the origin is unavailable."""
     subprocess.run(
-        ["kubectl", "--context", "kind-kind", "wait", "--for=condition=Ready",
-         "pod/cdn-1-edge-1", "pod/cdn-2-edge-1", "pod/cdn-3-edge-1",
-         "pod/origin-server", "pod/gateway", "--timeout=180s"],
+        [
+            "kubectl",
+            "--context",
+            "kind-kind",
+            "wait",
+            "--for=condition=Ready",
+            "pod/cdn-1-edge-1",
+            "pod/cdn-2-edge-1",
+            "pod/cdn-3-edge-1",
+            "pod/origin-server",
+            "pod/gateway",
+            "--timeout=180s",
+        ],
         check=True,
     )
     subprocess.run(
-        ["kubectl", "--context", "kind-kind", "wait", "--for=condition=Ready",
-         "pod", "-l", "app=telemetry-service", "--timeout=180s"],
+        [
+            "kubectl",
+            "--context",
+            "kind-kind",
+            "wait",
+            "--for=condition=Ready",
+            "pod",
+            "-l",
+            "app=telemetry-service",
+            "--timeout=180s",
+        ],
         check=True,
     )
 
@@ -667,13 +742,16 @@ def observe(playwright, args, strategy, output, warmup=None):
                 cache_control=response.headers.get("cache-control"),
             )
             if (
-                (args.skip_warmup or (warmed and cache_path(response.url) in warmed))
-                and not path.endswith(".mpd")
-            ):
+                args.skip_warmup or (warmed and cache_path(response.url) in warmed)
+            ) and not path.endswith(".mpd"):
                 cache_status = response.headers.get("x-cache-status")
-                item = dict(client=client, url=response.url,
-                            status=response.status, cache=cache_status,
-                            range=response.request.headers.get("range"))
+                item = dict(
+                    client=client,
+                    url=response.url,
+                    status=response.status,
+                    cache=cache_status,
+                    range=response.request.headers.get("range"),
+                )
                 if cache_status not in CACHED_MEDIA_STATUSES:
                     unexpected_misses.append(item)
                 elif cache_status != "HIT":
@@ -793,6 +871,7 @@ def observe(playwright, args, strategy, output, warmup=None):
                 "strategy": strategy,
                 "mpd": args.mpd,
                 "reward_lambda": args.reward_lambda,
+                "max_video_kbps": args.max_video_kbps,
             }
             if role == "modified":
                 query.update(
@@ -813,7 +892,11 @@ def observe(playwright, args, strategy, output, warmup=None):
         deadline = run_start + args.seconds
         observation_end = round(deadline - started, 3)
         measurement_at = run_start + args.measurement_start
-        attack_at = run_start + args.attack_delay if modified and not args.attack_from_start else None
+        attack_at = (
+            run_start + args.attack_delay
+            if modified and not args.attack_from_start
+            else None
+        )
         observation_start = None
         viewer_initial = None
         cdn_bytes_initial = None
@@ -877,8 +960,14 @@ def observe(playwright, args, strategy, output, warmup=None):
         viewer_final = [viewer_snapshot(page) for page in pages]
         viewer_traces = [viewer_trace(page) for page in pages]
         (directory / "viewer-traces.json").write_text(
-            json.dumps({str(session["client"]): trace for session, trace in
-                        zip(sessions, viewer_traces)}, indent=2) + "\n"
+            json.dumps(
+                {
+                    str(session["client"]): trace
+                    for session, trace in zip(sessions, viewer_traces)
+                },
+                indent=2,
+            )
+            + "\n"
         )
         for page in pages:
             page.evaluate("document.querySelector('video').pause()")
@@ -903,7 +992,9 @@ def observe(playwright, args, strategy, output, warmup=None):
                     **session,
                     "rebuffer_seconds": rebuffer,
                     "startup_ms": final["startup_ms"],
-                    "qoe": summarize_viewer_qoe(trace, initial["ms"], final["ms"]),
+                    "qoe": summarize_viewer_qoe(
+                        trace, initial["ms"], final["ms"], args.max_video_kbps
+                    ),
                 }
             )
         problems = []
@@ -913,11 +1004,19 @@ def observe(playwright, args, strategy, output, warmup=None):
             problems.append("Browser JavaScript errors occurred")
         if len({session["sid"] for session in sessions}) != args.clients:
             problems.append("Client sessions are not unique")
-        if any(client["time"] <= 0 or client["error"] for client in clients) and not args.allow_viewer_failure:
+        if (
+            any(client["time"] <= 0 or client["error"] for client in clients)
+            and not args.allow_viewer_failure
+        ):
             problems.append("At least one client did not play successfully")
-        if any(viewer["qoe"]["media_progress_seconds"] <= 0 or
-               viewer["startup_ms"] is None for viewer in viewers
-               ) and not args.allow_viewer_failure:
+        if (
+            any(
+                viewer["qoe"]["media_progress_seconds"] <= 0
+                or viewer["startup_ms"] is None
+                for viewer in viewers
+            )
+            and not args.allow_viewer_failure
+        ):
             problems.append("At least one player has incomplete playback measurements")
         if args.allow_viewer_failure and any(client["ended"] for client in clients):
             problems.append("A player reached the natural end of the video")
@@ -970,7 +1069,8 @@ def observe(playwright, args, strategy, output, warmup=None):
                     )
                 }
                 accepted_rewards = [
-                    item["claimed_reward"] for item in audit
+                    item["claimed_reward"]
+                    for item in audit
                     if item["sn"] in learned_sequences
                 ]
                 accepted = len(accepted_rewards)
@@ -1000,9 +1100,12 @@ def observe(playwright, args, strategy, output, warmup=None):
                 matched_deliveries=sum(item["matched_deliveries"] for item in details),
                 accepted_falsified=sum(item["accepted_falsified"] for item in details),
                 mean_accepted_claimed_reward=statistics.mean(
-                    reward for item in details
+                    reward
+                    for item in details
                     for reward in item["accepted_claimed_rewards"]
-                ) if any(item["accepted_claimed_rewards"] for item in details) else None,
+                )
+                if any(item["accepted_claimed_rewards"] for item in details)
+                else None,
             )
             if not malicious["accepted_falsified"]:
                 problems.append(
@@ -1098,8 +1201,19 @@ def main():
     )
     parser.add_argument("--bucket", type=Path, default=ROOT / "bucket")
     parser.add_argument("--strategy", choices=(*STRATEGIES, "all"), default="ucb1")
-    parser.add_argument("--reward-lambda", type=float, default=5.0,
-                        help="Positive coefficient in d/(d + lambda * ttlb)")
+    parser.add_argument(
+        "--reward-lambda",
+        type=float,
+        default=5.0,
+        help="Positive coefficient in d/(d + lambda * ttlb)",
+    )
+    parser.add_argument(
+        "--max-video-kbps",
+        type=int,
+        choices=(1500, 3000),
+        default=3000,
+        help="Video ABR cap: 1500=576p, 3000=720p",
+    )
     parser.add_argument(
         "--clients",
         type=int,
@@ -1113,8 +1227,11 @@ def main():
         default=0,
         help="Seconds from the start of an attack run until false telemetry begins",
     )
-    parser.add_argument("--attack-from-start", action="store_true",
-                        help="Enable false telemetry as each modified player starts")
+    parser.add_argument(
+        "--attack-from-start",
+        action="store_true",
+        help="Enable false telemetry as each modified player starts",
+    )
     parser.add_argument(
         "--measurement-start",
         type=float,
@@ -1135,10 +1252,16 @@ def main():
         "--workers", type=int, default=4, help="Concurrent warmup downloads"
     )
     parser.add_argument("--skip-warmup", action="store_true")
-    parser.add_argument("--require-fresh-cache", action="store_true",
-                        help="Reject STALE/UPDATING/REVALIDATED media in research runs")
-    parser.add_argument("--allow-viewer-failure", action="store_true",
-                        help="Record post-start pause or fatal error as a QoE outcome")
+    parser.add_argument(
+        "--require-fresh-cache",
+        action="store_true",
+        help="Reject STALE/UPDATING/REVALIDATED media in research runs",
+    )
+    parser.add_argument(
+        "--allow-viewer-failure",
+        action="store_true",
+        help="Record post-start pause or fatal error as a QoE outcome",
+    )
     parser.add_argument(
         "--output", type=Path, default=ROOT / "results" / "multi-client"
     )
@@ -1152,7 +1275,8 @@ def main():
         "--malicious-cdn", choices=("cdn-1", "cdn-2", "cdn-3"), default="cdn-1"
     )
     parser.add_argument(
-        "--attack-ttlb", type=int,
+        "--attack-ttlb",
+        type=int,
         help="Fixed TTLB in milliseconds declared for successful target-CDN video responses",
     )
     parser.add_argument(
@@ -1192,9 +1316,7 @@ def main():
         parser.error(
             "malicious-count must leave at least one honest player; replicate must be positive"
         )
-    if args.malicious_count and (
-        args.attack_ttlb is None or args.attack_ttlb <= 0
-    ):
+    if args.malicious_count and (args.attack_ttlb is None or args.attack_ttlb <= 0):
         parser.error(
             "attack-ttlb must be a positive integer when modified players are requested"
         )

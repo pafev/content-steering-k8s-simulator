@@ -8,10 +8,16 @@ if (($# < 2)); then
 fi
 fault="$1"
 out="$2"
+max_video_kbps="${QOE_MAX_VIDEO_KBPS:-3000}"
+if [[ "$max_video_kbps" != 1500 && "$max_video_kbps" != 3000 ]]; then
+  echo "QOE_MAX_VIDEO_KBPS must be 1500 or 3000" >&2
+  exit 2
+fi
 shift 2
 doses=("$@")
 if ((${#doses[@]} == 0)); then
-  doses=(1200 2500 3500 5000 8000 12000)
+  echo "Supply at least three TTLB doses explicitly; choose them after calibrating the scenario" >&2
+  exit 2
 fi
 if [[ ! -f "$fault" ]]; then
   echo "Missing NetChaos manifest: $fault" >&2
@@ -20,12 +26,13 @@ fi
 mkdir -p "$out"
 runner=.venv/bin/python
 
-"$runner" - "$out" "$fault" "${doses[@]}" <<'PY'
+"$runner" - "$out" "$fault" "$max_video_kbps" "${doses[@]}" <<'PY'
 import hashlib, json, pathlib, random, sys
 root = pathlib.Path(sys.argv[1])
 fault = pathlib.Path(sys.argv[2])
+max_video_kbps = int(sys.argv[3])
 try:
-    doses = sorted(int(value) for value in sys.argv[3:])
+    doses = sorted(int(value) for value in sys.argv[4:])
 except ValueError as error:
     raise SystemExit(f"Invalid TTLB: {error}")
 if len(doses) < 3 or len(doses) != len(set(doses)) or doses[0] <= 0:
@@ -37,7 +44,8 @@ if dose_file.exists() and dose_file.read_text() != content:
 dose_file.write_text(content)
 scenario_file = root / "scenario.json"
 scenario = {"fault_sha256": hashlib.sha256(fault.read_bytes()).hexdigest(),
-            "ttlb_ms": doses, "malicious_count": 3, "reward_lambda": 10}
+            "ttlb_ms": doses, "malicious_count": 3, "reward_lambda": 10,
+            "max_video_kbps": max_video_kbps}
 if scenario_file.exists() and json.loads(scenario_file.read_text()) != scenario:
     raise SystemExit(f"Different scenario already recorded in {scenario_file}; use a new output root")
 scenario_file.write_text(json.dumps(scenario, indent=2) + "\n")
@@ -60,9 +68,9 @@ if [[ "${QOE_PLAN_ONLY:-0}" == 1 ]]; then
 fi
 
 has_run() {
-  "$runner" - "$out" "$fault" "$1" "$2" "$3" <<'PY'
+  "$runner" - "$out" "$fault" "$max_video_kbps" "$1" "$2" "$3" <<'PY'
 import hashlib, json, pathlib, sys
-root, fault, kind, ttlb, target = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3], int(sys.argv[4]) if sys.argv[4] != '-' else 0, int(sys.argv[5])
+root, fault, max_video_kbps, kind, ttlb, target = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), int(sys.argv[3]), sys.argv[4], int(sys.argv[5]) if sys.argv[5] != '-' else 0, int(sys.argv[6])
 fault_hash = hashlib.sha256(fault.read_bytes()).hexdigest()
 matches = 0
 for path in root.glob('*/multi-*/summary.json'):
@@ -77,6 +85,7 @@ for path in root.glob('*/multi-*/summary.json'):
     if (summary.get('success') and complete_qoe and not cache.get('cached_non_hit_responses')
         and cfg.get('fault_sha256') == fault_hash and cfg.get('strategy') == 'ucb1'
         and cfg.get('clients') == 10 and cfg.get('reward_lambda') == 10
+        and cfg.get('max_video_kbps', 1500) == max_video_kbps
         and cfg.get('seconds') == 120 and cfg.get('measurement_start') == 40
         and cfg.get('replicate') == 1 and cfg.get('allow_viewer_failure')
         and cfg.get('require_fresh_cache')
@@ -114,6 +123,7 @@ while read -r kind ttlb; do
   fi
   "$runner" scripts/multi_client.py --strategy ucb1 --clients 10 \
     --seconds 120 --measurement-start 40 --reward-lambda 10 --replicate 1 \
+    --max-video-kbps "$max_video_kbps" \
     --require-fresh-cache --allow-viewer-failure \
     --fault-manifest "$fault" --output "$out" \
     "${attack_args[@]}" "${warmup[@]}"

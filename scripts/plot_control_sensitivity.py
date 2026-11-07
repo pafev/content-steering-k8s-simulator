@@ -1,4 +1,4 @@
-"""Compare honest control runs across reward sensitivities."""
+"""Summarize honest reward gaps and steering by lambda, not a sensitivity scale."""
 
 import argparse
 import csv
@@ -13,6 +13,7 @@ import numpy as np
 
 
 REGIMES = ("low", "medium", "high")
+LABELS = (r"$\lambda=1$", r"$\lambda=10$", r"$\lambda=25$")
 FIELDS = ("g_13", "g_12", "cdn1_first_priority")
 
 
@@ -38,7 +39,7 @@ def main():
         values = [averages[regime][field] for regime in REGIMES]
         bars = gaps.bar(x + shift, values, width=0.34, label=label, color=color)
         gaps.bar_label(bars, fmt="%.3f", padding=3, fontsize=9)
-    gaps.set(title="Separação das recompensas", ylabel="Gap médio", xticks=x, xticklabels=REGIMES)
+    gaps.set(title="Separação das recompensas", ylabel="Gap médio", xticks=x, xticklabels=LABELS)
     gaps.set_ylim(0, max(averages[regime]["g_12"] for regime in REGIMES) * 1.2)
     gaps.legend(frameon=False)
 
@@ -46,9 +47,9 @@ def main():
     bars = priority.bar(x, values, width=0.55, color="#54a24b")
     priority.bar_label(bars, fmt="%.1f%%", padding=3)
     priority.set(title="CDN-1 em primeira prioridade", ylabel="Média dos controles (%)",
-                 xticks=x, xticklabels=REGIMES, ylim=(0, 100))
+                 xticks=x, xticklabels=LABELS, ylim=(0, 100))
     for ax in (gaps, priority):
-        ax.set_xlabel("Sensibilidade da recompensa")
+        ax.set_xlabel("Coeficiente da recompensa")
         ax.spines[["top", "right"]].set_visible(False)
     fig.suptitle("Seis controles honestos por regime (UCB1)", fontsize=13)
     output = args.output or args.root / "controls-sensitivity.png"

@@ -33,20 +33,26 @@ def read_run(path):
     honest = [viewers[client] for client in range(4, 11)]
     if any(viewer["qoe"]["qoe_index"] is None for viewer in honest):
         raise ValueError(f"Missing QoE index for an honest client: {path}")
-    quality = [viewer["qoe"]["rendered_quality_kbps"] for viewer in honest
-               if viewer["qoe"]["rendered_quality_kbps"] is not None]
+    quality = [
+        viewer["qoe"]["rendered_quality_kbps"]
+        for viewer in honest
+        if viewer["qoe"]["rendered_quality_kbps"] is not None
+    ]
     return {
-        "run_id": summary["run_id"], "summary_path": str(path),
+        "run_id": summary["run_id"],
+        "summary_path": str(path),
         "kind": "control" if config["malicious_count"] == 0 else "attack",
         "ttlb_ms": config.get("attack_ttlb") or 0,
         "configuration": config,
         "qoe_index": mean(viewer["qoe"]["qoe_index"] for viewer in honest),
-        "no_progress_seconds": mean(viewer["qoe"]["no_progress_seconds"]
-                                    for viewer in honest),
+        "no_progress_seconds": mean(
+            viewer["qoe"]["no_progress_seconds"] for viewer in honest
+        ),
         "rebuffer_seconds": mean(viewer["rebuffer_seconds"] for viewer in honest),
         "rendered_quality_kbps": mean(quality) if quality else None,
-        "terminal_failures": sum(viewer["qoe"]["terminal_failure"]
-                                 for viewer in honest),
+        "terminal_failures": sum(
+            viewer["qoe"]["terminal_failure"] for viewer in honest
+        ),
     }
 
 
@@ -58,10 +64,23 @@ def validate(runs, doses):
     if len(controls) != 6 or len(attacks) != 2 * len(doses):
         raise ValueError("Expected six controls and two attacks per TTLB")
     reference = controls[0]["configuration"]
-    keys = ("strategy", "clients", "reward_lambda", "seconds",
-            "measurement_start", "fault_sha256", "mpd", "replicate")
-    if (reference["clients"], reference["reward_lambda"],
-            reference["seconds"], reference["measurement_start"]) != (10, 10, 120, 40):
+    keys = (
+        "strategy",
+        "clients",
+        "reward_lambda",
+        "seconds",
+        "measurement_start",
+        "fault_sha256",
+        "mpd",
+        "replicate",
+        "max_video_kbps",
+    )
+    if (
+        reference["clients"],
+        reference["reward_lambda"],
+        reference["seconds"],
+        reference["measurement_start"],
+    ) != (10, 10, 120, 40):
         raise ValueError("Expected 10 clients, lambda=10 and a 40–120 s window")
     if reference["strategy"] != "ucb1" or not reference["fault_sha256"]:
         raise ValueError("Expected UCB1 and a versioned NetChaos manifest")
@@ -74,9 +93,13 @@ def validate(runs, doses):
         if run["kind"] == "control":
             if cfg["malicious_count"] != 0:
                 raise ValueError("Invalid control")
-        elif (cfg["malicious_count"] != 3 or cfg["malicious_cdn"] != "cdn-1"
-              or cfg["attack_delay"] != 40 or cfg.get("attack_from_start")
-              or run["ttlb_ms"] not in doses):
+        elif (
+            cfg["malicious_count"] != 3
+            or cfg["malicious_cdn"] != "cdn-1"
+            or cfg["attack_delay"] != 40
+            or cfg.get("attack_from_start")
+            or run["ttlb_ms"] not in doses
+        ):
             raise ValueError(f"Unexpected attack: {run['summary_path']}")
     for dose in doses:
         if sum(run["ttlb_ms"] == dose for run in attacks) != 2:
@@ -86,29 +109,53 @@ def validate(runs, doses):
 
 def plot_metric(controls, attacks, doses, field, label, output, primary=False):
     baseline = [run[field] for run in controls if run[field] is not None]
-    values = [[run[field] for run in attacks if run["ttlb_ms"] == dose]
-              for dose in doses]
+    values = [
+        [run[field] for run in attacks if run["ttlb_ms"] == dose] for dose in doses
+    ]
     if not baseline:
         return False
     values = [[value for value in group if value is not None] for group in values]
     base_mean = mean(baseline)
     base_sd = stdev(baseline) if len(baseline) > 1 else 0
     averages = [mean(group) if group else float("nan") for group in values]
-    fig, axes = plt.subplots(2 if primary else 1, 1,
-                             figsize=(8.5, 7 if primary else 4.7),
-                             sharex=primary, constrained_layout=True)
+    fig, axes = plt.subplots(
+        2 if primary else 1,
+        1,
+        figsize=(8.5, 7 if primary else 4.7),
+        sharex=primary,
+        constrained_layout=True,
+    )
     if not primary:
         axes = [axes]
+    fig.suptitle(
+        f"Teto ABR: {controls[0]['configuration'].get('max_video_kbps', 3000)} kb/s"
+    )
     ax = axes[0]
-    ax.axhspan(base_mean - base_sd, base_mean + base_sd,
-               color="#2166ac", alpha=0.15, label="Controle ± DP (6 runs)")
+    ax.axhspan(
+        base_mean - base_sd,
+        base_mean + base_sd,
+        color="#2166ac",
+        alpha=0.15,
+        label="Controle ± DP (6 runs)",
+    )
     ax.axhline(base_mean, color="#2166ac", linestyle="--")
     for dose, group in zip(doses, values):
-        ax.scatter([dose * (0.98 if index == 0 else 1.02)
-                    for index in range(len(group))], group, color="#b2182b",
-                   s=28, alpha=0.75, zorder=3)
-    ax.plot(doses, averages, color="#b2182b", marker="o", linewidth=1.3,
-            label="Ataque: média de 2 runs")
+        ax.scatter(
+            [dose * (0.98 if index == 0 else 1.02) for index in range(len(group))],
+            group,
+            color="#b2182b",
+            s=28,
+            alpha=0.75,
+            zorder=3,
+        )
+    ax.plot(
+        doses,
+        averages,
+        color="#b2182b",
+        marker="o",
+        linewidth=1.3,
+        label="Ataque: média de 2 runs",
+    )
     ax.set_ylabel(label)
     ax.legend(loc="best", fontsize=8)
     ax.grid(alpha=0.2)
@@ -117,12 +164,20 @@ def plot_metric(controls, attacks, doses, field, label, output, primary=False):
         effect = axes[1]
         effect.axhline(0, color="#2166ac", linestyle="--")
         for dose, group in zip(doses, values):
-            effect.scatter([dose * (0.98 if index == 0 else 1.02)
-                            for index in range(len(group))],
-                           [value - base_mean for value in group],
-                           color="#b2182b", s=28, alpha=0.75)
-        effect.plot(doses, [value - base_mean for value in averages],
-                    color="#b2182b", marker="o", linewidth=1.3)
+            effect.scatter(
+                [dose * (0.98 if index == 0 else 1.02) for index in range(len(group))],
+                [value - base_mean for value in group],
+                color="#b2182b",
+                s=28,
+                alpha=0.75,
+            )
+        effect.plot(
+            doses,
+            [value - base_mean for value in averages],
+            color="#b2182b",
+            marker="o",
+            linewidth=1.3,
+        )
         effect.set_ylabel("Ataque − controle (QoE)")
         effect.grid(alpha=0.2)
     else:
@@ -156,9 +211,13 @@ def main():
     controls, attacks = validate(runs, doses)
     output = args.output or args.root / "plots"
     output.mkdir(parents=True, exist_ok=True)
-    write_csv(output / "run-qoe.csv",
-              [{key: value for key, value in run.items() if key != "configuration"}
-               for run in runs])
+    write_csv(
+        output / "run-qoe.csv",
+        [
+            {key: value for key, value in run.items() if key != "configuration"}
+            for run in runs
+        ],
+    )
     summary = []
     for dose in doses:
         group = [run for run in attacks if run["ttlb_ms"] == dose]
@@ -167,17 +226,34 @@ def main():
             control_values = [run[field] for run in controls]
             attack_values = [run[field] for run in group]
             if any(value is None for value in control_values + attack_values):
-                row.update({f"control_{field}": None,
-                            f"attack_{field}": None, f"delta_{field}": None})
+                row.update(
+                    {
+                        f"control_{field}": None,
+                        f"attack_{field}": None,
+                        f"delta_{field}": None,
+                    }
+                )
             else:
                 c, a = mean(control_values), mean(attack_values)
-                row.update({f"control_{field}": c,
-                            f"attack_{field}": a, f"delta_{field}": a - c})
+                row.update(
+                    {
+                        f"control_{field}": c,
+                        f"attack_{field}": a,
+                        f"delta_{field}": a - c,
+                    }
+                )
         summary.append(row)
     write_csv(output / "dose-summary.csv", summary)
     for field, label, filename in METRICS:
-        if not plot_metric(controls, attacks, doses, field, label,
-                           output / filename, primary=field == "qoe_index"):
+        if not plot_metric(
+            controls,
+            attacks,
+            doses,
+            field,
+            label,
+            output / filename,
+            primary=field == "qoe_index",
+        ):
             print(f"Skipped {filename}: no observed video quality in controls")
     print(f"Wrote {len(controls)} controls and {len(attacks)} attacks to {output}")
 

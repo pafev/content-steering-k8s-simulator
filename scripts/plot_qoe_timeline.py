@@ -25,7 +25,7 @@ def check(controls, attacks):
         raise ValueError("Supply twelve distinct runs")
     first = controls[0][0]["configuration"]
     keys = ("clients", "reward_lambda", "fault_sha256", "mpd",
-            "seconds", "measurement_start")
+            "seconds", "measurement_start", "max_video_kbps")
     if (first["clients"], first["reward_lambda"], first["seconds"],
             first["measurement_start"]) != (10, 10, 120, 40):
         raise ValueError("Expected ten clients, lambda=10 and a 40–120 s window")

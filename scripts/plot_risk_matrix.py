@@ -242,6 +242,8 @@ def main():
                 != config.get("measurement_start", 0)
                 or control["summary"]["configuration"].get("reward_lambda", 5)
                 != config.get("reward_lambda", 5)
+                or control["summary"]["configuration"].get("max_video_kbps", 1500)
+                != config.get("max_video_kbps", 1500)
             ):
                 raise ValueError(f"Control and attack conditions differ: {attack['path']}")
         clients = range(count + 1, 11)

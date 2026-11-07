@@ -14,6 +14,7 @@ def write_run(root, number, ttlb, qoe):
     cfg = dict(strategy="ucb1", clients=10, reward_lambda=10, seconds=120,
                measurement_start=40, fault_sha256="same-fault", mpd="same-mpd",
                replicate=1, allow_viewer_failure=True, require_fresh_cache=True,
+               max_video_kbps=3000,
                malicious_count=3 if ttlb else 0, malicious_cdn="cdn-1",
                attack_ttlb=ttlb, attack_delay=40 if ttlb else 0,
                attack_from_start=False)

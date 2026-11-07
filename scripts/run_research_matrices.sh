@@ -41,6 +41,7 @@ for path in pathlib.Path(root).glob('*/multi-*/summary.json'):
         continue
     if (summary.get('success') and not cache.get('cached_non_hit_responses')
         and cfg['replicate'] == rep
+        and cfg.get('max_video_kbps', 1500) == 1500
         and cfg.get('reward_lambda', 5) == lam
         and cfg.get('fault_sha256') == fault_hash
         and ((kind == 'control' and cfg['malicious_count'] == 0)
@@ -63,6 +64,7 @@ for path in root.glob('*/multi-*/summary.json'):
     cache = json.loads((path.parent / 'cache-validation.json').read_text())
     if (summary.get('success') and not cache.get('cached_non_hit_responses')
         and cfg['replicate'] == rep and cfg.get('reward_lambda', 5) == lam
+        and cfg.get('max_video_kbps', 1500) == 1500
         and cfg.get('fault_sha256') == fault_hash
         and cfg['malicious_count'] == 0):
         controls.append((path, summary))
@@ -117,6 +119,7 @@ for pass in 1 2; do
       if ((started > 0)); then warmup=(--skip-warmup); fi
       "$runner" scripts/multi_client.py --strategy ucb1 --clients 10 \
         --seconds 120 --measurement-start 40 --attack-delay 40 \
+        --max-video-kbps 1500 \
         --require-fresh-cache \
         --reward-lambda "$lambda" --replicate "$rep" \
         --malicious-count "$count" --attack-ttlb "$ttlb" \
@@ -131,6 +134,7 @@ for pass in 1 2; do
         if ((started > 0)); then warmup=(--skip-warmup); fi
         "$runner" scripts/multi_client.py --strategy ucb1 --clients 10 \
           --seconds 120 --measurement-start 40 --reward-lambda "$lambda" \
+          --max-video-kbps 1500 \
           --require-fresh-cache \
           --replicate "$rep" --fault-manifest "$fault" \
           --output "$out" "${warmup[@]}"

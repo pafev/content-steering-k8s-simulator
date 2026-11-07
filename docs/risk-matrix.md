@@ -1,6 +1,7 @@
-# Executar as matrizes de risco
+# Matrizes históricas: análise complementar de lambda
 
-Este guia é o procedimento operacional para as três matrizes UCB1. O desenho,
+Este guia preserva o procedimento operacional das três matrizes UCB1. Elas
+variam lambda e não constituem, por si, o experimento principal do TCC. O desenho,
 as fórmulas e os limites de interpretação estão no
 [protocolo de pesquisa](research-protocol.md). Para preparar Kind, dependências
 e NetChaos, siga [simulations.md](simulations.md).
@@ -9,6 +10,8 @@ e NetChaos, siga [simulations.md](simulations.md).
 
 O experimento usa dez players reais, vídeo 576p/1,5 Mb/s, 120 s por execução,
 ataque após 40 s e análise de 40–120 s. O
+script fixa `--max-video-kbps 1500` para não misturar runs novos com os
+artefatos anteriores, embora o runner geral use 720p por padrão. O
 [manifesto de falha](../manifests/risk-matrix-netchaos.yaml) configura atrasos
 iniciais de 4, 12 e 9 ms para tráfego de CDN-1, CDN-2 e CDN-3 destinado aos
 pods de clientes. A calibração deve confirmar a ordem observada de

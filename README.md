@@ -62,7 +62,7 @@ The packaged MPD names the three CDN services and CSS directly. A dash-client po
 
 The first session defines the run's strategy and seed; conflicting records are rejected. The seed controls the RNG for decisions, but report ordering and network scheduling must also be recorded for complete reproduction.
 
-Each valid video segment attempt with `e=rr`, session, and decision trains the requested URL's CDN, once per CMCD report. A response of `rc=0` or HTTP error 4xx/5xx receives zero reward. For a 2xx response, the reward is `d/(d+5×ttlb)`, using media duration `d` and download time `ttlb` in milliseconds. The factor 5 increases sensitivity to delivery-time differences; it is an experiment parameter, not a CMCD standard. A successful fallback CDN receives its own reward; no previous stall is attributed to it. The result is a limited indicator of media delivery capacity, not the session's observed QoE. This is a simulator choice, not a formula prescribed by CMCD or Content Steering.
+Each valid video segment attempt with `e=rr`, session, and decision trains the requested URL's CDN, once per CMCD report. A response of `rc=0` or HTTP error 4xx/5xx receives zero reward. For a 2xx response, the reward is `d/(d+lambda×ttlb)`, using media duration `d` and download time `ttlb` in milliseconds. The configurable `lambda` defaults to 5; changing it alters the reward curve and its scale relative to the policy's exploration term, not a universal sensitivity level. A successful fallback CDN receives its own reward; no previous stall is attributed to it. The result is a limited indicator of media delivery capacity, not the session's observed QoE. This is a simulator choice, not a formula prescribed by CMCD or Content Steering.
 
 LinUCB uses the context `[1, buffer_ms / (buffer_ms + 10000)]`, captured prior to the decision. `RELOAD-URI` carries the private `decision_id`, which the client copies to `cs_decision` in the media URL. These parameters serve simulator correlation and are not CMCD fields.
 
@@ -84,8 +84,10 @@ Sessions expire after one hour without renewal; the UI renews every 30 seconds. 
 
 ## Run five clients and warm up caches
 
-[scripts/multi_client.py](scripts/multi_client.py) warms the CDNs through temporary direct port forwards and records decisions, cache, playback, and shared state. It runs one dash-client pod per client. See [how to run simulations](docs/simulations.md) and the [risk matrix](docs/risk-matrix.md). [Design and learning rule](docs/design.md) summarizes the results.
+[scripts/multi_client.py](scripts/multi_client.py) warms the CDNs through temporary direct port forwards and records decisions, cache, playback, and shared state. It runs one dash-client pod per client. See [how to run simulations](docs/simulations.md) and the [historical lambda matrices](docs/risk-matrix.md). [Design and learning rule](docs/design.md) summarizes the results.
+The runner and player default to a 3,000 kb/s video cap (720p); `--max-video-kbps 1500` selects the historical 576p cap. The historical matrix runner pins 1,500 kb/s explicitly.
 The [research protocol](docs/research-protocol.md) records the experimental decisions, stability checks, and pilot results.
+Its central question concerns poisoning of shared client telemetry; the historical lambda matrices are a complementary analysis, while new runs must keep pilots separate from the final sample.
 
 ## Tests
 

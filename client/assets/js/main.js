@@ -11,6 +11,9 @@ const pathways = ["cdn-1", "cdn-2", "cdn-3"];
 const telemetryBase =
   "http://telemetry-service.default.svc.cluster.local:30600";
 const steeringHost = "steering-server.default.svc.cluster.local";
+const maxVideoKbps = [1500, 3000].includes(Number(query.get("max_video_kbps")))
+  ? Number(query.get("max_video_kbps"))
+  : 3000;
 
 byId("run-id").value = query.get("run_id") || newId();
 byId("strategy").value = query.get("strategy") || "ucb1";
@@ -44,6 +47,7 @@ function setLinks() {
     strategy: session.strategy,
     mpd: session.cid,
     reward_lambda: session.reward_lambda,
+    max_video_kbps: maxVideoKbps,
   });
   byId("share-link").href = url;
   byId("state-link").href =
@@ -171,8 +175,7 @@ async function load(event) {
           },
         ],
       },
-      // Keep the ten real decoders within the experiment's 576p workload.
-      abr: { maxBitrate: { video: 1500 } },
+      abr: { maxBitrate: { video: maxVideoKbps } },
     },
   });
   player.attachSource(session.cid);

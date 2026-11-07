@@ -26,7 +26,7 @@ spec:
     labels:
       matchLabels:
         app: dash-client
-  delay: 850ms
+  delay: 270ms
 ---
 apiVersion: net-chaos-simulator.pafev.dev/v1
 kind: NetworkChaos
@@ -40,4 +40,4 @@ spec:
     labels:
       matchLabels:
         app: dash-client
-  delay: 700ms
+  delay: 250ms

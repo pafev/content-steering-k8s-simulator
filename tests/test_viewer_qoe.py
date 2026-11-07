@@ -17,7 +17,7 @@ def test_pause_and_quality_reduce_distinct_outcomes():
                   tick(4000, 2, quality=750)],
         "events": [{"ms": 1500, "type": "pause"}],
     }
-    result = summarize(trace, 0, 4000)
+    result = summarize(trace, 0, 4000, max_kbps=1500)
     assert result["no_progress_seconds"] == 2
     assert result["paused_seconds"] == 1
     assert result["rendered_quality_kbps"] == 1125
@@ -49,3 +49,10 @@ def test_complete_unavailability_has_zero_composite_index():
     result = summarize(trace, 0, 1000)
     assert result["rendered_quality_kbps"] is None
     assert result["qoe_index"] == 0
+
+
+def test_qoe_uses_selected_abr_cap():
+    trace = {"ticks": [tick(0, 0), tick(1000, 1)], "events": []}
+    assert summarize(trace, 0, 1000, max_kbps=1500)["qoe_index"] == 1
+    assert summarize(trace, 0, 1000, max_kbps=3000)["qoe_index"] == .5
+    assert summarize(trace, 0, 1000)["qoe_index"] == .5

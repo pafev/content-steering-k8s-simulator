@@ -1,7 +1,7 @@
 """Windowed playback outcomes from a research-runner event/tick trace."""
 
 
-def summarize(trace, start_ms, end_ms, max_kbps=1500):
+def summarize(trace, start_ms, end_ms, max_kbps=3000):
     all_ticks = trace["ticks"]
     ticks = [tick for tick in all_ticks if start_ms <= tick["ms"] <= end_ms]
     if len(ticks) < 2 or end_ms <= start_ms:
@@ -59,7 +59,7 @@ def summarize(trace, start_ms, end_ms, max_kbps=1500):
         "rendered_quality_kbps": mean_kbps,
         "quality_coverage_fraction": coverage,
         # Operational index: fraction of wall time with progress, weighted by
-        # the displayed video bitrate relative to the configured 1500 kb/s cap.
+        # the displayed video bitrate relative to the configured ABR cap.
         # Missing quality is not silently counted as zero bitrate.
         "qoe_index": 0.0 if progress_ms == 0 else
         availability * mean_kbps / max_kbps
