@@ -36,6 +36,16 @@ def test_fatal_error_and_recovery_are_distinguished():
     assert not summarize(trace, 0, 4000)["terminal_failure"]
 
 
+def test_brief_recovery_followed_by_final_freeze_is_terminal():
+    trace = {
+        "ticks": [tick(0, 0), tick(1000, 0), tick(2000, 1),
+                  tick(3000, 1, paused=True), tick(4000, 1, paused=True),
+                  tick(5000, 1, paused=True)],
+        "events": [{"ms": 500, "type": "media_error", "code": 3}],
+    }
+    assert summarize(trace, 0, 5000)["terminal_failure"]
+
+
 def test_missing_rendered_quality_is_reported_not_invented():
     trace = {"ticks": [tick(0, 0, None), tick(1000, 1, None)], "events": []}
     result = summarize(trace, 0, 1000)
