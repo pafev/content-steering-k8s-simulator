@@ -36,6 +36,7 @@ def summarize(trace, start_ms, end_ms, max_kbps=3000):
     last_failure = failures[-1] if failures else None
     recovered = last_failure is not None and any(
         before["ms"] >= last_failure["ms"] and
+        after["ms"] >= end_ms - 2000 and
         after["time"] > before["time"] + 0.05
         for before, after in zip(all_ticks, all_ticks[1:])
         if after["ms"] <= end_ms
