@@ -57,11 +57,10 @@ ou o segmento. Mostrar prioridade temporal em 0–120 s e
 **3. Condições de degradação de QoE.** Avaliar em pilotos separados NetChaos
 12/900/900 ms com TTLB falso de 9.000 ms e 240/500/500 ms com TTLB falso de
 5.000 ms. Usar primeiro pilotos de 60 s com ataque após 20 s; os runs finais
-mantêm 120 s e ataque após 40 s. Para evitar que a preparação sequencial
-consuma parte grande do vídeo de 182,8 s antes do início do run, preparar
-os players e iniciar a reprodução com intervalo de 1 s entre eles. Validar
-essa opção quanto a erros do browser antes da amostra final. Manter os demais
-parâmetros da etapa 1. Calibrar controle estável,
+mantêm 120 s e ataque após 40 s. Manter o início sequencial dos clientes e
+os demais parâmetros da etapa 1. O vídeo tem 182,8 s: verificar se o cliente
+mais adiantado não alcançará o fim natural durante os 120 s finais. Calibrar
+controle estável,
 desvio de prioridade e de rota efetiva sob ataque, e queda de QoE dos honestos.
 Se um candidato não produzir o efeito, testar outros valores de latência em
 pilotos identificados e registrar a seleção; congelar os cenários escolhidos
@@ -70,6 +69,13 @@ dois ataques independentes. Exibir bitrate, índice de QoE e avanço por cliente
 honesto em 0–120 s, incluindo tempo sem progresso, rebuffer e falhas
 terminais. A escolha adaptativa ilustra **quando e como** a queda pode ocorrer;
 não estima sua frequência em redes não selecionadas.
+
+Os pilotos até aqui não fixaram um cenário de QoE para a amostra final.
+Diferenças já presentes antes do ataque e erros de decodificação não são
+evidência de queda causada pelo envenenamento. Se a grade de latências não
+produzir um cenário válido sob as condições fixas, revisar explicitamente uma
+condição do desenho antes de executar a série final, em vez de selecionar um
+piloto favorável por acaso.
 
 **Trabalhos complementares.** Comparações com epsilon-greedy, LinUCB e
 `random`, falsificação de outros campos CMCD e outras funções de recompensa
