@@ -172,6 +172,57 @@ recompensa. Quando terminar, `plots/` contém `qoe-dose-response.png`,
 por dose, as figuras são descritivas: não ajustar curva ou declarar um limiar
 exato.
 
+## Séries finais do TCC (etapas 1–3)
+
+Primeiro calibre em 720p o manifesto 4/12/9 ms e os candidatos de QoE com
+`scripts/multi_client.py`. Guarde pilotos fora das raízes finais. Para cada
+candidato de QoE, execute um controle e um ataque **curtos**, com 60 s de
+reprodução e ataque após 20 s. Mantenha `M=3` e os demais parâmetros finais.
+Os players começam em sequência; examine a posição de reprodução e o buffer
+de cada slot ao interpretar os pilotos.
+Use uma raiz separada por piloto e consulte
+`scripts/check_qoe_pilot.py <controle/multi-id> <ataque/multi-id>` para comparar
+recompensa, prioridade, rota efetiva, bitrate, QoE e tempo sem progresso.
+Se não houver queda, teste outras latências em manifestos novos e registre
+quais candidatos foram avaliados antes de congelar as séries finais.
+
+```sh
+.venv/bin/python scripts/multi_client.py --strategy ucb1 --clients 10 \
+  --seconds 60 --measurement-start 20 --reward-lambda 10 \
+  --max-video-kbps 3000 --require-fresh-cache --allow-viewer-failure \
+  --fault-manifest manifests/qoe-12-900-900.yaml \
+  --output results/qoe-calibration-short/12-900-900/control
+.venv/bin/python scripts/multi_client.py --strategy ucb1 --clients 10 \
+  --seconds 60 --measurement-start 20 --reward-lambda 10 \
+  --max-video-kbps 3000 --require-fresh-cache --allow-viewer-failure \
+  --fault-manifest manifests/qoe-12-900-900.yaml \
+  --malicious-count 3 --attack-delay 20 --attack-ttlb 9000 \
+  --output results/qoe-calibration-short/12-900-900/attack
+```
+
+Após a calibração, execute **uma série por vez**. A primeira inclui as seis
+doses com `M=3` e as quatro células adicionais `M=1/5`, compartilhando seis
+controles (26 runs válidos). Cada cenário de QoE tem seis controles e dois
+ataques (oito runs válidos). Repetir o mesmo comando retoma somente runs que
+atendam às condições registradas no `plan.json` e tenham QoE completa.
+
+```sh
+bash scripts/run_tcc_series.sh fast \
+  manifests/risk-matrix-netchaos.yaml results/tcc-final/fast
+bash scripts/run_tcc_series.sh qoe \
+  manifests/qoe-12-900-900.yaml results/tcc-final/qoe-12-900-900 9000
+bash scripts/run_tcc_series.sh qoe \
+  manifests/qoe-240-500-500.yaml results/tcc-final/qoe-240-500-500 5000
+```
+
+Os dois comandos de QoE acima são **candidatos**; use-os como finais apenas
+após a calibração confirmar queda de QoE. Use outra raiz e manifesto se o
+cenário for alterado. `TCC_PLAN_ONLY=1` imprime a ordem planejada sem executar.
+`plots/` contém as curvas 0–120 s, o avanço individual e CSVs de efeitos
+calculados em 40–120 s. Os pontos finos nas curvas são runs individuais e
+a linha grossa é a média entre runs. O runner histórico de dose permanece
+separado e não deve ser misturado com esta amostra.
+
 ## Read and plot results
 
 Each invocation writes `results/<output>/<timestamp>/<run_id>/`. The useful

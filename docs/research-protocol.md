@@ -16,55 +16,65 @@ camada de proteção reduz esses efeitos sob as mesmas condições?
 
 Separar três perguntas no texto e na análise:
 
-1. **Aprendizado e decisão:** o CSS aceita relatos falsos e altera a prioridade devolvida?
-2. **Entrega e custo:** o player passa a usar outras CDNs e muda o custo unitário? Prioridade, caminho efetivo e bytes entregues são medidas distintas.
+1. **Aprendizado e decisão:** o CSS aceita relatos falsos e possui seu aprendizado alterado com isso?
+2. **Entrega e custo:** o player passa a usar outras CDNs e muda o custo unitário? Prioridade, caminho efetivo e bytes entregues são medidas.
 3. **Experiência:** a entrega alterada reduz QoE dos clientes honestos? Buffer, ABR, exploração e retorno à rota rápida podem amortecer uma mudança de prioridade.
 
 O problema não é exclusivo de TTLB, UCB1 ou da fórmula usada aqui. A magnitude do efeito
-depende desses elementos, da fração de feedback contaminado, da rede e do player. UCB1,
-epsilon-greedy e LinUCB são as políticas de bandit disponíveis; LinUCB é um bandit
-contextual, não uma representação de todo aprendizado de máquina. Não extrapolar um
+depende da capacidade de envenenamento de telemetria, da fração de feedback contaminado, da rede
+e do player. UCB1, epsilon-greedy e LinUCB são as políticas de bandit disponíveis; LinUCB é um
+bandit contextual, não uma representação de todo aprendizado de máquina. Não extrapolar um
 resultado do simulador a todo CSS.
 
 ## Desenho prospectivo
 
-**1. Experimento principal.** Fixar dez players, `M=3` clientes modificados, CDN-1 como
-alvo, UCB1, `lambda=10`, teto ABR de 720p/3.000 kb/s, reprodução por 120 s, ataque após
-40 s e janela de análise 40–120 s. Fixar um manifesto NetChaos; o ponto de partida é
-4/12/9 ms nas CDNs 1/2/3, em que as matrizes anteriores observaram desvio de steering e
-custo. Antes dos runs finais, recalibrar nesse teto de bitrate: TTLB percebido pelo
-player, ordem honesta das recompensas, cache e recursos do cluster. O atraso NetChaos
-não é RTT nem TTLB. Variar somente o TTLB declarado da CDN-1, escolhendo doses após
-medir o TTLB das alternativas nos controles piloto. Congelar a grade antes da amostra
-final. Usar seis controles compartilhados e dois ataques independentes por dose,
-intercalados, com `run_id` novo por run. Exibir pontos individuais além das médias; essa
-amostra não sustenta limiar exato ou intervalo de confiança estreito.
+**1. Dose na rede rápida.** Fixar dez players, `M=3` clientes modificados,
+CDN-1 como alvo, UCB1, `lambda=10`, teto ABR de 720p/3.000 kb/s, 120 s de
+reprodução e ataque após 40 s. Os players iniciam em sequência; registrar a
+posição de reprodução e o buffer no início da janela para interpretar diferenças
+entre slots. Usar NetChaos 4/12/9 ms nas CDNs 1/2/3 e TTLB
+falso declarado de 90, 200, 340, 530, 800 ou 1.200 ms. Antes da série final,
+verificar em 720p a ordem honesta das recompensas, TTLB percebido, cache e
+recursos do cluster: atraso NetChaos não é RTT nem TTLB. Fazer seis controles
+compartilhados e dois ataques independentes por dose, intercalados, cada qual
+com `run_id` novo. Gráficos de prioridade da CDN-1, bitrate exibido e índice
+operacional de QoE dos honestos cobrem **0–120 s**; gráficos de avanço mostram
+cada cliente honesto de cada run, com tempo sem progresso, rebuffer e falha
+terminal. Calcular `D_steer` e `Delta_egress_cost` apenas em **40–120 s**.
+Mostrar valores individuais dos runs junto às médias. Dois ataques por
+condição atendem ao escopo descritivo deste TCC, sem estimar um limiar preciso.
 
-**2. Proporção maliciosa.** Repetir apenas doses previamente escolhidas com `M` menor e
-maior, mantendo rede, política, recompensa e janela. Os clientes modificados substituem
-clientes honestos, baixam vídeo real e alteram somente relatos elegíveis. Comparar slots
-honestos `M+1..10` nos ataques e respectivos controles. Registrar a fração de feedback
-**aceito e falsificado** na CDN-alvo: `M/10` não é necessariamente essa fração. O run é
-a réplica, nunca o cliente ou o segmento.
+**2. Proporção maliciosa na mesma rede.** Fixar TTLB falso em 530/800 ms e
+variar `M=1/3/5`, com seis controles compartilhados e dois ataques por célula.
+Reutilizar os controles e ataques `M=3` da etapa 1. Os clientes modificados
+substituem clientes honestos, baixam vídeo real e alteram somente relatos
+elegíveis. Comparar slots honestos `M+1..10` nos ataques e respectivos
+controles. Registrar a fração de feedback **aceito e falsificado** na CDN-alvo:
+`M/10` não é necessariamente essa fração. O run é a réplica, nunca o cliente
+ou o segmento. Mostrar prioridade temporal em 0–120 s e
+`D_steer`/`Delta_egress_cost` em 40–120 s.
 
-**3. Alcance do resultado.** Em poucas doses fixadas previamente, comparar UCB1,
-epsilon-greedy e LinUCB, cada política com seus controles. `random` serve de referência
-sem aprendizado. O TTLB falso já envenena a recompensa das três políticas que aprendem;
-o contexto de buffer do LinUCB continua verdadeiro. Falsificação do contexto é outra
-hipótese. Para reduzir dependência de TTLB e da fórmula atual, fazer verificações
-pequenas com outro relato usado no aprendizado e outra função de recompensa limitada a
-`[0,1]`, sem repetir toda a grade. Definir e testar essas variantes antes dos runs; um
-único campo não prova vulnerabilidade a qualquer telemetria.
+**3. Condições de degradação de QoE.** Avaliar em pilotos separados NetChaos
+12/900/900 ms com TTLB falso de 9.000 ms e 240/500/500 ms com TTLB falso de
+5.000 ms. Usar primeiro pilotos de 60 s com ataque após 20 s; os runs finais
+mantêm 120 s e ataque após 40 s. Para evitar que a preparação sequencial
+consuma parte grande do vídeo de 182,8 s antes do início do run, preparar
+os players e iniciar a reprodução com intervalo de 1 s entre eles. Validar
+essa opção quanto a erros do browser antes da amostra final. Manter os demais
+parâmetros da etapa 1. Calibrar controle estável,
+desvio de prioridade e de rota efetiva sob ataque, e queda de QoE dos honestos.
+Se um candidato não produzir o efeito, testar outros valores de latência em
+pilotos identificados e registrar a seleção; congelar os cenários escolhidos
+antes dos runs finais. Para cada cenário selecionado, fazer seis controles e
+dois ataques independentes. Exibir bitrate, índice de QoE e avanço por cliente
+honesto em 0–120 s, incluindo tempo sem progresso, rebuffer e falhas
+terminais. A escolha adaptativa ilustra **quando e como** a queda pode ocorrer;
+não estima sua frequência em redes não selecionadas.
 
-**4. Solução futura.** Fixar cenários, doses, métricas e critérios de validade antes de
-comparar CSS com e sem proteção. Não escolher só ataques que funcionaram depois de
-observar desfechos. A proteção ainda não é especificada aqui.
-
-Um segundo cenário de rede só é necessário se a pergunta sobre queda de QoE exigir
-condições distintas das do experimento principal. Selecioná-lo em pilotos separados com
-controle estável **e** desvio de rota sob ataque; não substituir a rede principal depois
-de ver os resultados. Desvio e custo sem queda detectável de QoE também são resultados
-reportáveis.
+**Trabalhos complementares.** Comparações com epsilon-greedy, LinUCB e
+`random`, falsificação de outros campos CMCD e outras funções de recompensa
+ficam fora da amostra principal. Uma camada de proteção será definida e
+avaliada posteriormente, com controles próprios para cada modo.
 
 ## Medidas e raciocínio causal
 
@@ -89,14 +99,22 @@ servidos** por cada CDN complementa `D_steer`: a prioridade pode mudar sem mudan
 correspondente de rota. O custo é uma projeção unitária sob tarifas escolhidas, não uma
 fatura real; o volume baixado também pode diferir entre runs.
 
-Para clientes honestos, o índice operacional de QoE é a fração da janela com progresso
+Para clientes honestos, o índice operacional de QoE é a fração do período observado com progresso
 multiplicada pelo bitrate exibido médio, ponderado pelo tempo com progresso, dividida
 pelo teto ABR do run. Comparar apenas o mesmo vídeo e teto; não chamá-lo de MOS ou
 escala perceptual validada. Exibir tempo sem progresso, rebuffer, qualidade exibida,
-pausa e falha terminal para explicar o índice. Atraso de partida fica fora. O gráfico
-principal de dose deve mostrar, em painéis alinhados, `D_steer`, `Delta_egress_cost` e
-diferença de QoE; componentes de QoE ficam em gráficos auxiliares. Não atribuir
+pausa e falha terminal para explicar o índice. Os gráficos temporais cobrem
+0–120 s desde o limite comum do run e usam índice acumulado até cada instante.
+Os players iniciam em sequência antes desse limite, de modo que partida e buffer
+prévio podem diferir entre slots; registrar essa condição na interpretação. A janela
+40–120 s serve somente aos cálculos finais de `D_steer` e custo. O gráfico
+principal de dose deve mostrar, em painéis alinhados, `D_steer`,
+`Delta_egress_cost` e QoE; componentes ficam em gráficos auxiliares. Não atribuir
 causalidade a um evento `waiting/stalled` isolado.
+Se o índice for indefinido por cobertura insuficiente de qualidade, preservar o
+run e exibir os componentes e a falha; não selecionar outra execução com base
+nesse desfecho. Erros de decodificação do player exigem investigação separada
+antes de atribuir perda de QoE à rota CDN.
 
 ## Rede rápida, rede degradada e limites das inferências
 
@@ -149,16 +167,16 @@ Tarifas públicas de egress ao cliente na primeira faixa e região indicada, con
 2026-11-07. A associação tarifa–braço Nginx é hipótese **independente** da latência
 simulada; os braços não representam literalmente esses operadores.
 
-| Braço | Referência | `p_j` (USD/GB decimal) |
-| --- | --- | ---: |
-| CDN-1 | [bunny.net Standard, América do Sul](https://bunny.net/pricing/) | 0,045 |
-| CDN-2 | [Azure Front Door Standard/Premium, Zona 3](https://azure.microsoft.com/en-us/pricing/details/frontdoor/) | 0,11 |
-| CDN-3 | [KeyCDN, América Latina](https://www.keycdn.com/pricing) | 0,10 |
+| Braço | Referência                                                                                                | `p_j` (USD/GB decimal) |
+| ----- | --------------------------------------------------------------------------------------------------------- | ---------------------: |
+| CDN-1 | [bunny.net Standard, América do Sul](https://bunny.net/pricing/)                                          |                  0,045 |
+| CDN-2 | [Azure Front Door Standard/Premium, Zona 3](https://azure.microsoft.com/en-us/pricing/details/frontdoor/) |                   0,11 |
+| CDN-3 | [KeyCDN, América Latina](https://www.keycdn.com/pricing)                                                  |                   0,10 |
 
 O modelo inclui só egress por GB; não inclui taxa base ou por requisição do Azure Front
 Door, descontos, origem/cache, impostos ou perda de receita por QoE. Com `V` GB
 hipotéticos, a diferença projetada é `V × Delta_egress_cost`. Tarifas podem mudar: citar
-SKU, região e data. Logs UDP das CDNs são *best effort*, logo a completude dos bytes
+SKU, região e data. Logs UDP das CDNs são _best effort_, logo a completude dos bytes
 limita a estimativa.
 
 ## Análise complementar de lambda e histórico auditável
@@ -188,10 +206,11 @@ s.
 
 ## Próximas alterações de código
 
-1. Calibrar o manifesto principal em 720p. Manter `scripts/multi_client.py` como executor de controle e ataque.
-2. Fazer a análise de dose ler os mesmos runs e produzir `D_steer`, uso real de CDN e `Delta_egress_cost` junto dos plots de QoE. Reutilizar as fórmulas de `plot_risk_matrix.py` e validar manifesto, teto, janela, cache e slots honestos.
-3. Depois de fixar cenário e doses, adaptar a orquestração para pequenas séries de proporção e política. O runner de dose atual é específico de `M=3`, UCB1 e `lambda=10`; não apresentá-lo como runner genérico.
-4. Definir segunda falsificação e segunda recompensa antes de codificá-las. Validar ingestão, auditoria e comparabilidade com runs isolados; não repetir a matriz completa para cada variante.
+O runner `scripts/multi_client.py` executa controles e ataques e grava QoE em
+40–120 s e 0–120 s. `scripts/run_tcc_series.sh` orquestra as etapas 1–3 e
+`scripts/plot_tcc_series.py` analisa seus runs. A proteção e os trabalhos
+complementares ainda não estão implementados. Consulte [simulations.md](simulations.md)
+para comandos, calibração e retomada.
 
 Não misturar pilotos com amostra final nem tratar células com controles compartilhados
 como comparações independentes.
