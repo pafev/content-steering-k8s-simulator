@@ -831,11 +831,18 @@ def observe(playwright, args, strategy, output, warmup=None):
         return page.evaluate("""() => {
             const m = window.__viewerMetric;
             const now = performance.now();
-            m.ticks.push({ms: now, time: document.querySelector('video').currentTime,
-                          paused: document.querySelector('video').paused,
-                          ended: document.querySelector('video').ended,
+            const video = document.querySelector('video');
+            let bufferedAhead = 0;
+            for (let i = 0; i < video.buffered.length; i++) {
+                if (video.buffered.start(i) <= video.currentTime &&
+                    video.currentTime <= video.buffered.end(i))
+                    bufferedAhead = Math.max(bufferedAhead, video.buffered.end(i) - video.currentTime);
+            }
+            m.ticks.push({ms: now, time: video.currentTime,
+                          paused: video.paused,
+                          ended: video.ended,
                           quality_kbps: m.qualityKbps});
-            return {playback: document.querySelector('video').currentTime,
+            return {playback: video.currentTime, buffered_ahead: bufferedAhead,
                     rebuffer_ms: m.rebufferMs + (m.waiting === null ? 0 : now - m.waiting),
                     startup_ms: m.started === null ? null : m.started - m.requested,
                     ms: now};
@@ -889,6 +896,8 @@ def observe(playwright, args, strategy, output, warmup=None):
 
         # Both runs measure the same interval after all players become active.
         run_start = time.monotonic()
+        run_start_elapsed = round(run_start - started, 3)
+        viewer_run_initial = [viewer_snapshot(page) for page in pages]
         deadline = run_start + args.seconds
         observation_end = round(deadline - started, 3)
         measurement_at = run_start + args.measurement_start
@@ -983,17 +992,27 @@ def observe(playwright, args, strategy, output, warmup=None):
             for path in cdn_bytes_final
         }
         viewers = []
-        for session, initial, final, trace in zip(
-            sessions, viewer_initial, viewer_final, viewer_traces
+        for session, initial, run_initial, final, trace in zip(
+            sessions, viewer_initial, viewer_run_initial, viewer_final, viewer_traces
         ):
             rebuffer = max(0.0, (final["rebuffer_ms"] - initial["rebuffer_ms"]) / 1000)
             viewers.append(
                 {
                     **session,
                     "rebuffer_seconds": rebuffer,
+                    "rebuffer_seconds_full": max(
+                        0.0, (final["rebuffer_ms"] - run_initial["rebuffer_ms"]) / 1000
+                    ),
+                    "playback_at_run_start_seconds": run_initial["playback"],
+                    "buffer_at_run_start_seconds": run_initial["buffered_ahead"],
+                    "playback_at_attack_seconds": initial["playback"],
+                    "buffer_at_attack_seconds": initial["buffered_ahead"],
                     "startup_ms": final["startup_ms"],
                     "qoe": summarize_viewer_qoe(
                         trace, initial["ms"], final["ms"], args.max_video_kbps
+                    ),
+                    "qoe_full": summarize_viewer_qoe(
+                        trace, run_initial["ms"], final["ms"], args.max_video_kbps
                     ),
                 }
             )
@@ -1149,6 +1168,7 @@ def observe(playwright, args, strategy, output, warmup=None):
                 if k not in ("player_endpoints", "telemetry_base")
             },
             "observation_start": observation_start,
+            "run_start_elapsed": run_start_elapsed,
             "observation_end": observation_end,
             "cdn_bytes_window": cdn_bytes_window,
             "cdn_bytes_initial": cdn_bytes_initial,
