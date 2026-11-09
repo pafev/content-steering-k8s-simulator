@@ -118,33 +118,6 @@ def priority_series(run, first_honest):
     return np.arange(5, duration, 10), mean_series(values)
 
 
-def plot_curves(controls, attacks, count, output, qoe_plots=True):
-    duration = controls[0]["summary"]["configuration"]["seconds"]
-    attack_start = attacks[0]["summary"]["configuration"]["attack_delay"]
-    metrics = [("priority", "Fração CDN-1 em primeira prioridade", "priority.png")]
-    if qoe_plots:
-        metrics += [("bitrate", "Bitrate exibido médio (kb/s)", "bitrate.png"),
-                    ("qoe", "Índice QoE acumulado", "qoe-timeline.png")]
-    for field, label, filename in metrics:
-        fig, ax = plt.subplots(figsize=(8, 4.5), constrained_layout=True)
-        for group, color, name in ((controls, "#2166ac", "Controle"), (attacks, "#b2182b", "Ataque")):
-            curves = []
-            for run in group:
-                if field == "priority":
-                    x, y = priority_series(run, count + 1)
-                else:
-                    x, bitrate, qoe = full_series(run, count + 1)
-                    y = bitrate if field == "bitrate" else qoe
-                curves.append(y)
-                ax.plot(x, y, color=color, alpha=.22, linewidth=.8)
-            ax.plot(x, mean_series(curves), color=color, linewidth=2, label=f"{name} (n={len(group)})")
-        ax.axvline(attack_start, color="gray", linestyle="--", linewidth=1)
-        ax.set(xlim=(0, duration), xlabel="Tempo desde início do run (s)", ylabel=label)
-        if field != "bitrate": ax.set_ylim(0, 1)
-        ax.grid(alpha=.2); ax.legend()
-        fig.savefig(output / filename, dpi=150); plt.close(fig)
-
-
 def plot_combined(controls, groups, count, field, output):
     fig, ax = plt.subplots(figsize=(9, 5), constrained_layout=True)
     items = [("Controle", controls, "#2166ac")]
@@ -217,10 +190,6 @@ def effective_shares(run, first_honest):
     return {cdn: counts[cdn] / total if total else None for cdn in PRICES_USD_PER_GB}
 
 
-def effective_share(run, first_honest):
-    return effective_shares(run, first_honest)["cdn-1"]
-
-
 def honest_qoe(run, first_honest):
     values = [v["qoe_full"]["qoe_index"] for v in run["summary"]["viewers"]
               if v["client"] >= first_honest]
@@ -240,8 +209,6 @@ def main():
     for m, dose in plan["cells"]:
         attacks = [r for r in runs if (r["summary"]["configuration"]["malicious_count"],
                                         r["summary"]["configuration"].get("attack_ttlb")) == (m, dose)]
-        cell = output / f"M{m}-ttlb{dose}"; cell.mkdir(exist_ok=True)
-        plot_curves(controls, attacks, m, cell, qoe_plots=(m == 3 or plan["mode"] == "qoe"))
         c_steer = np.mean([steering_probability(r, range(m + 1, 11)) for r in controls])
         c_cost = np.mean([unit_cost(r) for r in controls])
         control_qoe = [honest_qoe(r, m + 1) for r in controls]
@@ -254,13 +221,15 @@ def main():
             decoder_errors = sum(any(e["type"] == "media_error" and
                 "DECODE" in str(e.get("message", ""))
                 for e in r["traces"][str(v["client"])]["events"]) for v in honest)
+            a_steer = steering_probability(r, range(m + 1, 11))
+            a_cost = unit_cost(r)
             row = dict(run_id=s["run_id"], m=m, ttlb_ms=dose,
                        control_cdn1_priority_40_120=1 - c_steer,
-                       attack_cdn1_priority_40_120=1 - steering_probability(r, range(m + 1, 11)),
-                       d_steer=steering_probability(r, range(m + 1, 11)) - c_steer,
+                       attack_cdn1_priority_40_120=1 - a_steer,
+                       d_steer=a_steer - c_steer,
                        control_cost_usd_per_gb_40_120=c_cost,
-                       attack_cost_usd_per_gb_40_120=unit_cost(r),
-                       delta_c_usd_per_gb=unit_cost(r) - c_cost,
+                       attack_cost_usd_per_gb_40_120=a_cost,
+                       delta_c_usd_per_gb=a_cost - c_cost,
                        control_qoe_0_120=c_qoe,
                        attack_qoe_0_120=a_qoe,
                        delta_qoe=a_qoe - c_qoe if a_qoe is not None and c_qoe is not None else None,
@@ -284,39 +253,42 @@ def main():
                                  delta_c_usd_per_gb=np.mean([r["delta_c_usd_per_gb"] for r in group]),
                                  delta_qoe=float(np.mean(deltas)) if all(v is not None for v in deltas) else None,
                                  cdn1_effective_share=np.mean([r["cdn1_effective_share"] for r in group])))
-        advance_runs = attacks + (controls if m == 3 and (plan["mode"] == "qoe" or dose == 90) else [])
-        for r in advance_runs:
-            label = "control" if r in controls else "attack"
-            client_rows += video_advance(r, m + 1, cell / f"advance-{label}-{r['summary']['run_id']}.png")
+    advance = output / "advance"; advance.mkdir(exist_ok=True)
+    for r in runs:
+        c = r["summary"]["configuration"]
+        if c["malicious_count"] in (0, 3):
+            first_honest = c["malicious_count"] + 1
+            client_rows += video_advance(r, first_honest,
+                advance / f"{r['summary']['run_id']}.png")
     write_csv(output / "run-effects.csv", run_rows)
     write_csv(output / "cell-effects.csv", summary_rows)
     write_csv(output / "honest-clients.csv", client_rows)
-    if plan["mode"] == "fast":
-        for m in (1, 3, 5):
-            doses = (90, 200, 340, 530, 800, 1200) if m == 3 else (530, 800)
-            groups = [(dose, [r for r in runs if
-                       (r["summary"]["configuration"]["malicious_count"],
-                        r["summary"]["configuration"].get("attack_ttlb")) == (m, dose)])
-                      for dose in doses]
-            for field in (("priority", "bitrate", "qoe") if m == 3 else ("priority",)):
-                plot_combined(controls, groups, m, field, output / f"M{m}-{field}-timeline.png")
-        for field, label, filename, scale in (
+    for m in sorted({m for m, _ in plan["cells"]}):
+        doses = [dose for count, dose in plan["cells"] if count == m]
+        groups = [(dose, [r for r in runs if
+                   (r["summary"]["configuration"]["malicious_count"],
+                    r["summary"]["configuration"].get("attack_ttlb")) == (m, dose)])
+                  for dose in doses]
+        for field in (("priority", "bitrate", "qoe") if m == 3 else ("priority",)):
+            plot_combined(controls, groups, m, field, output / f"M{m}-{field}-timeline.png")
+    for field, label, filename, scale in (
             ("d_steer", "D_steer (pontos percentuais)", "D_steer.png", 100),
             ("delta_c_usd_per_gb", "Δ custo (USD/GB)", "Delta_c.png", 1),
             ("delta_qoe", "Δ QoE (ataque − controle)", "Delta_qoe.png", 1),
-        ):
-            fig, ax = plt.subplots(figsize=(8, 4.5), constrained_layout=True)
-            for m in (1, 3, 5):
-                cells = [r for r in summary_rows if r["m"] == m]
-                visible = [r for r in cells if r[field] is not None]
-                ax.plot([r["ttlb_ms"] for r in visible], [r[field] * scale for r in visible], marker="o", label=f"M={m}")
-                individual = [r for r in run_rows if r["m"] == m and r[field] is not None]
-                ax.scatter([r["ttlb_ms"] for r in individual], [r[field] * scale for r in individual], s=12, alpha=.5)
-            ax.axhline(0, color="gray", linewidth=.8)
-            ax.set(xscale="log", xlabel="TTLB falso (ms)", ylabel=label)
-            ax.set_xticks([90, 200, 340, 530, 800, 1200], ["90", "200", "340", "530", "800", "1200"])
-            ax.grid(alpha=.2); ax.legend()
-            fig.savefig(output / filename, dpi=150); plt.close(fig)
+    ):
+        fig, ax = plt.subplots(figsize=(8, 4.5), constrained_layout=True)
+        for m in sorted({m for m, _ in plan["cells"]}):
+            cells = [r for r in summary_rows if r["m"] == m]
+            visible = [r for r in cells if r[field] is not None]
+            ax.plot([r["ttlb_ms"] for r in visible], [r[field] * scale for r in visible], marker="o", label=f"M={m}")
+            individual = [r for r in run_rows if r["m"] == m and r[field] is not None]
+            ax.scatter([r["ttlb_ms"] for r in individual], [r[field] * scale for r in individual], s=12, alpha=.5)
+        ax.axhline(0, color="gray", linewidth=.8)
+        ax.set(xscale="log", xlabel="TTLB falso (ms)", ylabel=label)
+        doses = sorted({dose for _, dose in plan["cells"]})
+        ax.set_xticks(doses, [str(dose) for dose in doses])
+        ax.grid(alpha=.2); ax.legend()
+        fig.savefig(output / filename, dpi=150); plt.close(fig)
     print(f"Wrote {len(summary_rows)} cells to {output}")
 
 

@@ -213,8 +213,9 @@ s.
 ## Próximas alterações de código
 
 O runner `scripts/multi_client.py` executa controles e ataques e grava QoE em
-40–120 s e 0–120 s. `scripts/run_tcc_series.sh` orquestra as etapas 1–3 e
-`scripts/plot_tcc_series.py` analisa seus runs. A proteção e os trabalhos
+40–120 s e 0–120 s. `scripts/run_tcc_dose_proportion.sh` orquestra as etapas 1–2;
+`scripts/plot_tcc_series.py` analisa seus runs. A série final da etapa 3 depende
+de calibração. A proteção e os trabalhos
 complementares ainda não estão implementados. Consulte [simulations.md](simulations.md)
 para comandos, calibração e retomada.
 

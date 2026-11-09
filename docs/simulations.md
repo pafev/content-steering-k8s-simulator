@@ -200,27 +200,25 @@ quais candidatos foram avaliados antes de congelar as séries finais.
   --output results/qoe-calibration-short/12-900-900/attack
 ```
 
-Após a calibração, execute **uma série por vez**. A primeira inclui as seis
+Para as etapas 1–2, execute a série abaixo. Ela inclui as seis
 doses com `M=3` e as quatro células adicionais `M=1/5`, compartilhando seis
-controles (26 runs válidos). Cada cenário de QoE tem seis controles e dois
-ataques (oito runs válidos). Repetir o mesmo comando retoma somente runs que
+controles (26 runs válidos). Repetir o mesmo comando retoma somente runs que
 atendam às condições registradas no `plan.json` e tenham traços de QoE.
 Índices indefinidos por cobertura insuficiente continuam nos resultados, com
 tempo sem avanço e falhas explícitos.
 
 ```sh
-bash scripts/run_tcc_series.sh fast \
-  manifests/risk-matrix-netchaos.yaml results/tcc-final/fast
-# Somente depois de congelar um cenário QoE válido:
-bash scripts/run_tcc_series.sh qoe \
-  <manifesto-netchaos-validado.yaml> <raiz-final-exclusiva> <ttlb-falso-ms>
+bash scripts/run_tcc_dose_proportion.sh \
+  manifests/risk-matrix-netchaos.yaml results/tcc-final/dose-proportion
 ```
 
 Os cenários 12/900/900 e 240/500/500 ms continuam como pilotos, não como
-comandos finais aprovados. Use outra raiz e manifesto se o cenário for alterado.
+comandos finais aprovados. A série final de QoE será definida após validar um
+cenário; seus pilotos permanecem em raízes separadas.
 `TCC_PLAN_ONLY=1` imprime a ordem planejada sem executar.
-`plots/` contém as curvas 0–120 s, o avanço individual e CSVs de efeitos
-calculados em 40–120 s. Os pontos finos nas curvas são runs individuais e
+`plots/` contém as curvas 0–120 s, o avanço individual dos controles e ataques
+com `M=3` e CSVs de efeitos
+calculados em 40–120 s. As linhas finas nas curvas são runs individuais e
 a linha grossa é a média entre runs. O runner histórico de dose permanece
 separado e não deve ser misturado com esta amostra.
 

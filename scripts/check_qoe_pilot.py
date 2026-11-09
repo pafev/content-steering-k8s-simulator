@@ -6,11 +6,7 @@ from pathlib import Path
 from statistics import mean
 
 from plot_risk_matrix import steering_probability, unit_cost
-from plot_tcc_series import effective_share, full_series, load_run
-
-
-def resolve(path):
-    return path / "summary.json" if path.is_dir() else path
+from plot_tcc_series import effective_shares, full_series, load_run
 
 
 def describe(run):
@@ -29,7 +25,7 @@ def describe(run):
              for k, v in s["delivery_calibration"].items()},
              ttlb_median={k: v["median_ttlb_ms"] for k, v in s["delivery_calibration"].items()},
              cdn1_priority_analysis=1 - steering_probability(run, range(4, 11)),
-             cdn1_effective_share_analysis=effective_share(run, 4),
+             cdn1_effective_share_analysis=effective_shares(run, 4)["cdn-1"],
              unit_cost_usd_per_gb_analysis=unit_cost(run),
              mean_qoe_full=mean(qoe) if all(v is not None for v in qoe) else None,
              undefined_qoe_clients=[v["client"] for v in honest if v["qoe_full"]["qoe_index"] is None],
@@ -49,7 +45,8 @@ def main():
     parser.add_argument("control", type=Path)
     parser.add_argument("attack", type=Path)
     args = parser.parse_args()
-    control, attack = (load_run(resolve(p)) for p in (args.control, args.attack))
+    control, attack = (load_run(p / "summary.json" if p.is_dir() else p)
+                       for p in (args.control, args.attack))
     if control is None or attack is None:
         parser.error("Both pilots must be valid completed runs")
     c, a = control["summary"]["configuration"], attack["summary"]["configuration"]

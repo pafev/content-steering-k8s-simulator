@@ -1,27 +1,20 @@
 #!/usr/bin/env bash
-# Final runs for the fast-network dose/proportion series or one selected QoE scenario.
+# Final dose/proportion series on the 4/12/9 ms network.
 set -euo pipefail
-if (($# < 3 || $# > 4)); then
-  echo "Usage: bash scripts/run_tcc_series.sh fast|qoe NETCHAOS.yaml OUTPUT-ROOT [FALSE-TTLB-MS]" >&2
+if (($# != 2)); then
+  echo "Usage: bash scripts/run_tcc_dose_proportion.sh NETCHAOS.yaml OUTPUT-ROOT" >&2
   exit 2
 fi
-mode=$1 fault=$2 out=$3 dose=${4:-}
+fault=$1 out=$2
 [[ -f "$fault" ]] || { echo "Missing manifest: $fault" >&2; exit 2; }
-if [[ "$mode" == fast ]]; then
-  [[ -z "$dose" ]] || { echo "Fast series fixes its six doses" >&2; exit 2; }
-elif [[ "$mode" == qoe ]]; then
-  [[ "$dose" =~ ^[0-9]+$ ]] && ((dose > 0)) || { echo "QoE needs a positive false TTLB" >&2; exit 2; }
-else
-  echo "Choose fast or qoe" >&2; exit 2
-fi
 runner=.venv/bin/python
 mkdir -p "$out"
-"$runner" - "$mode" "$fault" "$out" "$dose" <<'PY'
+"$runner" - "$fault" "$out" <<'PY'
 import hashlib, json, pathlib, random, sys
-mode, fault, root, dose = sys.argv[1], pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3]), sys.argv[4]
+fault, root = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 cells = ([(3, t) for t in (90, 200, 340, 530, 800, 1200)] +
-         [(m, t) for m in (1, 5) for t in (530, 800)]) if mode == 'fast' else [(3, int(dose))]
-plan = dict(mode=mode, fault_sha256=hashlib.sha256(fault.read_bytes()).hexdigest(),
+         [(m, t) for m in (1, 5) for t in (530, 800)])
+plan = dict(fault_sha256=hashlib.sha256(fault.read_bytes()).hexdigest(),
             cells=cells, clients=10, seconds=120, attack_delay=40,
             measurement_start=40, reward_lambda=10, max_video_kbps=3000)
 path = root / 'plan.json'
@@ -31,26 +24,22 @@ path.write_text(json.dumps(plan, indent=2) + '\n')
 order = root / 'order.txt'
 if not order.exists():
     attacks = cells * 2
-    random.Random(20261108 if mode == 'fast' else 20261109).shuffle(attacks)
-    if mode == 'qoe':
-        lines = ['0 0', '0 0', f'{attacks[0][0]} {attacks[0][1]}',
-                 '0 0', '0 0', f'{attacks[1][0]} {attacks[1][1]}', '0 0', '0 0']
-    else:
-        controls_at = {round(i * len(attacks) / 6) for i in range(6)}
-        lines = []
-        for i, (m, t) in enumerate(attacks):
-            if i in controls_at:
-                lines.append('0 0')
-            lines.append(f'{m} {t}')
+    random.Random(20261108).shuffle(attacks)
+    controls_at = {round(i * len(attacks) / 6) for i in range(6)}
+    lines = []
+    for i, (m, t) in enumerate(attacks):
+        if i in controls_at:
+            lines.append('0 0')
+        lines.append(f'{m} {t}')
     order.write_text('\n'.join(lines) + '\n')
 PY
 if [[ ${TCC_PLAN_ONLY:-0} == 1 ]]; then cat "$out/order.txt"; exit 0; fi
 
 has_run() {
-  "$runner" - "$out" "$fault" "$mode" "$1" "$2" "$3" <<'PY'
+  "$runner" - "$out" "$fault" "$1" "$2" "$3" <<'PY'
 import hashlib, json, pathlib, sys
-root, fault, mode = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
-m, ttlb, target = map(int, sys.argv[4:])
+root, fault = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+m, ttlb, target = map(int, sys.argv[3:])
 digest = hashlib.sha256(fault.read_bytes()).hexdigest()
 found = 0
 for path in root.glob('*/multi-*/summary.json'):
