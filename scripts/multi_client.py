@@ -757,7 +757,7 @@ def observe(playwright, args, strategy, output, warmup=None):
                 elif cache_status != "HIT":
                     cached_non_hit.append(item)
 
-    def start_player(page, query):
+    def start_player(page, query, defer_play=False):
         page.goto(f"{PLAYER_BASE}/?{urlencode(query)}", timeout=args.timeout * 1000)
         page.evaluate("""() => {
             const video = document.querySelector('video');
@@ -773,10 +773,20 @@ def observe(playwright, args, strategy, output, warmup=None):
                 event('pause_call', {stack: new Error().stack});
                 return nativePause(...args);
             };
+            const bufferedAhead = () => {
+                let ahead = 0;
+                for (let i = 0; i < video.buffered.length; i++) {
+                    if (video.buffered.start(i) <= video.currentTime &&
+                        video.currentTime <= video.buffered.end(i))
+                        ahead = Math.max(ahead, video.buffered.end(i) - video.currentTime);
+                }
+                return ahead;
+            };
             const tick = () => metric.ticks.push({
                 ms: performance.now(), time: video.currentTime,
                 paused: video.paused, ended: video.ended,
-                quality_kbps: metric.qualityKbps
+                quality_kbps: metric.qualityKbps,
+                buffered_ahead: bufferedAhead()
             });
             const wait = () => {
                 if (metric.started !== null && metric.waiting === null && !video.paused)
@@ -803,6 +813,12 @@ def observe(playwright, args, strategy, output, warmup=None):
                 event('media_error', {code: video.error?.code ?? null,
                                       message: video.error?.message ?? null});
             });
+            video.addEventListener('player-recovery', (e) =>
+                event(e.detail.type, {resume_at: e.detail.resume_at ?? null,
+                    resumed_at: e.detail.resumed_at ?? null,
+                    reason: e.detail.reason ?? null,
+                    grace_ms: e.detail.grace_ms ?? null,
+                    sid: e.detail.sid, run_id: e.detail.run_id}));
             window.__viewerTap = (player) => {
                 metric.dashTapAttached = true;
                 player.on(dashjs.MediaPlayer.events.QUALITY_CHANGE_RENDERED, (e) => {
@@ -819,13 +835,17 @@ def observe(playwright, args, strategy, output, warmup=None):
             window.__viewerMetric = metric;
         }""")
         page.get_by_role("button", name="Load video").click()
+        sid = page.locator("#session-id").inner_text()
+        if not defer_play:
+            play_player(page)
+        return sid
+
+    def play_player(page):
         page.wait_for_function(
             "document.querySelector('video').readyState >= 1",
             timeout=args.timeout * 1000,
         )
-        sid = page.locator("#session-id").inner_text()
         page.evaluate("document.querySelector('video').play()")
-        return sid
 
     def viewer_snapshot(page):
         return page.evaluate("""() => {
@@ -841,7 +861,8 @@ def observe(playwright, args, strategy, output, warmup=None):
             m.ticks.push({ms: now, time: video.currentTime,
                           paused: video.paused,
                           ended: video.ended,
-                          quality_kbps: m.qualityKbps});
+                          quality_kbps: m.qualityKbps,
+                          buffered_ahead: bufferedAhead});
             return {playback: video.currentTime, buffered_ahead: bufferedAhead,
                     rebuffer_ms: m.rebufferMs + (m.waiting === null ? 0 : now - m.waiting),
                     startup_ms: m.started === null ? null : m.started - m.requested,
@@ -870,7 +891,8 @@ def observe(playwright, args, strategy, output, warmup=None):
             page.on(
                 "pageerror",
                 lambda error, c=client: errors.append(
-                    {"client": c, "error": str(error)}
+                    {"client": c, "error": str(error),
+                     "stack": getattr(error, "stack", None)}
                 ),
             )
             query = {
@@ -886,13 +908,34 @@ def observe(playwright, args, strategy, output, warmup=None):
                     attack_ttlb=args.attack_ttlb,
                     attack_enabled="true" if args.attack_from_start else "false",
                 )
-            sid = start_player(page, query)
+            sid = start_player(page, query, defer_play=args.bounded_start)
             if role == "modified":
                 modified[client]["sid"] = sid
             sessions.append({"client": client, "sid": sid, "role": role})
             record("session", client, sid=sid, role=role)
-            if index + 1 < args.clients and args.stagger:
+            if not args.bounded_start and index + 1 < args.clients and args.stagger:
                 page.wait_for_timeout(args.stagger * 1000)
+
+        play_span = None
+        if args.bounded_start:
+            # Media metadata can arrive out of order. Wait for every page before
+            # starting playback so no slow page serializes the play requests.
+            for page in pages:
+                page.wait_for_function(
+                    "document.querySelector('video').readyState >= 1",
+                    timeout=args.timeout * 1000,
+                )
+            play_times = []
+            for index, page in enumerate(pages):
+                play_times.append(time.monotonic())
+                # Do not let a slow play() promise delay the next client.
+                page.evaluate("void document.querySelector('video').play()")
+                if index + 1 < args.clients and args.stagger:
+                    page.wait_for_timeout(args.stagger * 1000)
+            play_span = round(play_times[-1] - play_times[0], 3)
+
+        induced_error_at = (time.monotonic() + args.induce_media_error_at
+                            if args.induce_media_error_at is not None else None)
 
         # Both runs measure the same interval after all players become active.
         run_start = time.monotonic()
@@ -924,6 +967,14 @@ def observe(playwright, args, strategy, output, warmup=None):
                     player["page"].evaluate("window.__cmcdLieEnabled = true")
                     record("attack_enabled", client)
                 attack_at = None
+            if induced_error_at is not None and time.monotonic() >= induced_error_at:
+                pages[0].evaluate("""() => {
+                    const video = document.querySelector('video');
+                    video.src = 'data:video/mp4;base64,AA==';
+                    video.load();
+                }""")
+                record("induced_media_error", 1)
+                induced_error_at = None
             state = read_state(args.telemetry_base, run_id, args.timeout)
             clients = [
                 page.evaluate("""() => {
@@ -963,6 +1014,8 @@ def observe(playwright, args, strategy, output, warmup=None):
                 wait = min(wait, max(0, measurement_at - time.monotonic()))
             if attack_at is not None:
                 wait = min(wait, max(0, attack_at - time.monotonic()))
+            if induced_error_at is not None:
+                wait = min(wait, max(0, induced_error_at - time.monotonic()))
             pages[0].wait_for_timeout(wait * 1000)
 
         feedback = sum(int(model.get("n", 0)) for model in state["model"].values())
@@ -1008,6 +1061,11 @@ def observe(playwright, args, strategy, output, warmup=None):
                     "playback_at_attack_seconds": initial["playback"],
                     "buffer_at_attack_seconds": initial["buffered_ahead"],
                     "startup_ms": final["startup_ms"],
+                    "media_errors": sum(e["type"] == "media_error" for e in trace["events"]),
+                    "recovery_attempts": sum(e["type"] == "recovery_attempt" for e in trace["events"]),
+                    "recovery_successes": sum(e["type"] == "recovery_success" for e in trace["events"]),
+                    "recovery_failures": sum(e["type"] in ("recovery_failure", "recovery_exhausted")
+                                             for e in trace["events"]),
                     "qoe": summarize_viewer_qoe(
                         trace, initial["ms"], final["ms"], args.max_video_kbps
                     ),
@@ -1166,15 +1224,23 @@ def observe(playwright, args, strategy, output, warmup=None):
                 k: v
                 for k, v in vars(args).items()
                 if k not in ("player_endpoints", "telemetry_base")
-            },
+            } | {"buffer_trace_version": 5},
             "observation_start": observation_start,
             "run_start_elapsed": run_start_elapsed,
+            "play_request_span_seconds": play_span,
             "observation_end": observation_end,
             "cdn_bytes_window": cdn_bytes_window,
             "cdn_bytes_initial": cdn_bytes_initial,
             "cdn_bytes_final": cdn_bytes_final,
             "delivery_calibration": delivery_calibration,
             "viewers": viewers,
+            "viewer_outcomes": {
+                "media_errors": sum(v["media_errors"] for v in viewers),
+                "recovery_attempts": sum(v["recovery_attempts"] for v in viewers),
+                "recovery_successes": sum(v["recovery_successes"] for v in viewers),
+                "recovery_failures": sum(v["recovery_failures"] for v in viewers),
+                "terminal_failures": sum(v["qoe_full"]["terminal_failure"] for v in viewers),
+            },
             "final": {**sample, "state": state},
             "errors": errors,
             "malicious": malicious,
@@ -1263,6 +1329,10 @@ def main():
         "--stagger", type=float, default=1, help="Seconds between client starts"
     )
     parser.add_argument(
+        "--bounded-start", action="store_true",
+        help="Prepare every player before staggered play requests (QoE pilots)",
+    )
+    parser.add_argument(
         "--timeout",
         type=positive,
         default=30,
@@ -1281,6 +1351,10 @@ def main():
         "--allow-viewer-failure",
         action="store_true",
         help="Record post-start pause or fatal error as a QoE outcome",
+    )
+    parser.add_argument(
+        "--induce-media-error-at", type=positive, default=None,
+        help="Disposable pilot only: corrupt client 1 media source after this many run seconds",
     )
     parser.add_argument(
         "--output", type=Path, default=ROOT / "results" / "multi-client"
@@ -1348,6 +1422,8 @@ def main():
         parser.error("attack-from-start requires malicious-count and no attack-delay")
     if args.fault_manifest and not args.fault_manifest.is_file():
         parser.error("--fault-manifest must point to a file")
+    if args.induce_media_error_at is not None and args.induce_media_error_at >= args.seconds:
+        parser.error("induce-media-error-at must be shorter than seconds")
     args.fault_sha256 = (
         hashlib.sha256(args.fault_manifest.read_bytes()).hexdigest()
         if args.fault_manifest
