@@ -31,6 +31,8 @@ def check(controls, attacks):
         raise ValueError("Expected ten clients, lambda=10 and a 40–120 s window")
     for summary, _ in runs:
         config = summary["configuration"]
+        if config.get("buffer_trace_version") != 5:
+            raise ValueError(f"Official QoE requires buffer traces: {summary['run_id']}")
         if not summary["success"] or not config.get("allow_viewer_failure"):
             raise ValueError(f"Incomplete QoE run: {summary['run_id']}")
         if any(config.get(key) != first.get(key) for key in keys):
