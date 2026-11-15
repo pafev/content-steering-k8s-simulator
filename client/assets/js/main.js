@@ -7,6 +7,13 @@ let player;
 let session;
 let decisionId = null;
 let registrationPending = false;
+let lastValidPosition = 0;
+let playbackStarted = false;
+let recoveryTimer = null;
+let nativeErrorTimer = null;
+let fatalErrorTimer = null;
+let recoveryState = "idle";
+const fatalRecoveryGraceMs = 3000;
 const pathways = ["cdn-1", "cdn-2", "cdn-3"];
 const telemetryBase =
   "http://telemetry-service.default.svc.cluster.local:30600";
@@ -57,8 +64,15 @@ function setLinks() {
 
 async function load(event) {
   event.preventDefault();
+  clearTimeout(recoveryTimer);
+  clearTimeout(nativeErrorTimer);
+  clearTimeout(fatalErrorTimer);
+  fatalErrorTimer = null;
   if (player) player.reset();
   decisionId = null;
+  recoveryState = "idle";
+  lastValidPosition = 0;
+  playbackStarted = false;
   session = {
     run_id: byId("run-id").value,
     strategy: byId("strategy").value,
@@ -67,7 +81,6 @@ async function load(event) {
     seed: 1,
     reward_lambda: Number(query.get("reward_lambda") || 5),
   };
-  const contentId = new URL(session.cid).pathname;
   byId("session-id").textContent = session.sid;
   byId("priority").textContent = "—";
   byId("active-pathway").textContent = "—";
@@ -80,6 +93,84 @@ async function load(event) {
       error.message + ". Playback has not started; retry Load video.";
     return;
   }
+  createPlayer();
+  byId("status").textContent =
+    "Video loaded. Press play; telemetry is shared with this run.";
+}
+
+function recoveryEvent(type, extra = {}) {
+  document.querySelector("video").dispatchEvent(new CustomEvent("player-recovery", {
+    detail: { type, sid: session.sid, run_id: session.run_id, ...extra },
+  }));
+}
+
+function recoverMedia() {
+  if (!playbackStarted) return;
+  clearTimeout(nativeErrorTimer);
+  clearTimeout(fatalErrorTimer);
+  fatalErrorTimer = null;
+  if (recoveryState !== "idle") {
+    if (recoveryState === "succeeded") {
+      recoveryState = "exhausted";
+      recoveryEvent("recovery_exhausted", { resume_at: lastValidPosition });
+    }
+    return;
+  }
+  recoveryState = "pending";
+  const video = document.querySelector("video");
+  const resumeAt = lastValidPosition;
+  recoveryEvent("recovery_attempt", { resume_at: resumeAt });
+  byId("status").textContent = `Recovering playback at ${resumeAt.toFixed(2)} s…`;
+  const onProgress = () => {
+    if (recoveryState !== "pending" || video.seeking || video.paused || video.error ||
+        video.currentTime <= resumeAt + 0.25) return;
+    recoveryState = "succeeded";
+    clearTimeout(recoveryTimer);
+    video.removeEventListener("timeupdate", onProgress);
+    recoveryEvent("recovery_success", { resume_at: resumeAt,
+      resumed_at: video.currentTime });
+    byId("status").textContent = "Playback recovered.";
+  };
+  const fail = (reason) => {
+    if (recoveryState !== "pending") return;
+    recoveryState = "failed";
+    clearTimeout(recoveryTimer);
+    video.removeEventListener("timeupdate", onProgress);
+    recoveryEvent("recovery_failure", { resume_at: resumeAt, reason });
+    byId("status").textContent = "Playback recovery failed: " + reason;
+  };
+  video.addEventListener("timeupdate", onProgress);
+  recoveryTimer = setTimeout(() => fail("no media progress within 20 seconds"), 20000);
+  try {
+    player.reset();
+    decisionId = null;
+    createPlayer(resumeAt, fail);
+  } catch (error) {
+    fail(error.message);
+  }
+}
+
+function waitBeforeRecovery() {
+  if (!playbackStarted || fatalErrorTimer !== null) return;
+  const positionAtError = lastValidPosition;
+  recoveryEvent("recovery_wait", { resume_at: positionAtError,
+    grace_ms: fatalRecoveryGraceMs });
+  byId("status").textContent = "Media error; checking playback before recovery…";
+  fatalErrorTimer = setTimeout(() => {
+    fatalErrorTimer = null;
+    const video = document.querySelector("video");
+    if (!video.error && !video.paused &&
+        video.currentTime > positionAtError + 0.25) {
+      recoveryEvent("recovery_cancelled", { resume_at: positionAtError });
+      return;
+    }
+    recoverMedia();
+  }, fatalRecoveryGraceMs);
+}
+
+function createPlayer(resumeAt = null, recoveryFailed = null) {
+  const video = document.querySelector("video");
+  const contentId = new URL(session.cid).pathname;
   player = dashjs.MediaPlayer().create();
   // The research runner may attach playback event instrumentation.
   window.__viewerTap?.(player);
@@ -119,8 +210,26 @@ async function load(event) {
   player.on(dashjs.MediaPlayer.events.ERROR, (e) => {
     byId("status").textContent =
       "Player: " + (e.error?.message || JSON.stringify(e.error));
+    if (playbackStarted && ([2, 3, 4].includes(Number(e.error?.code)) ||
+        /MEDIA_ERR_(NETWORK|DECODE|SRC_NOT_SUPPORTED)/.test(e.error?.message || ""))) {
+      // dash.js emits ERROR only after its own media recovery is exhausted.
+      waitBeforeRecovery();
+    }
   });
-  player.initialize(document.querySelector("video"), null, false);
+  if (resumeAt !== null) {
+    let resumeRequested = false;
+    player.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
+      if (resumeRequested) return;
+      resumeRequested = true;
+      try {
+        player.seek(resumeAt);
+        Promise.resolve(video.play()).catch((error) => recoveryFailed(error.message));
+      } catch (error) {
+        recoveryFailed(error.message);
+      }
+    });
+  }
+  player.initialize(video, null, false);
   player.updateSettings({
     streaming: {
       cmcd: {
@@ -179,8 +288,6 @@ async function load(event) {
     },
   });
   player.attachSource(session.cid);
-  byId("status").textContent =
-    "Video loaded. Press play; telemetry is shared with this run.";
 }
 
 async function refreshState() {
@@ -215,6 +322,21 @@ async function refreshState() {
   }
 }
 byId("playback-form").addEventListener("submit", load);
+const playbackVideo = document.querySelector("video");
+playbackVideo.addEventListener("playing", () => { playbackStarted = true; });
+playbackVideo.addEventListener("timeupdate", () => {
+  if (Number.isFinite(playbackVideo.currentTime) && playbackVideo.currentTime > 0 && !playbackVideo.error)
+    lastValidPosition = playbackVideo.currentTime;
+});
+playbackVideo.addEventListener("error", () => {
+  if (!playbackStarted) return;
+  clearTimeout(nativeErrorTimer);
+  const positionAtError = lastValidPosition;
+  nativeErrorTimer = setTimeout(() => {
+    if (playbackVideo.error && playbackVideo.currentTime <= positionAtError + 0.05)
+      recoverMedia();
+  }, 5000);
+});
 setInterval(refreshState, 5000);
 setInterval(
   () =>

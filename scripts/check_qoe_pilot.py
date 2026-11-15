@@ -13,6 +13,7 @@ def describe(run):
     s = run["summary"]
     honest = [v for v in s["viewers"] if v["client"] >= 4]
     qoe = [v["qoe_full"]["qoe_index"] for v in honest]
+    post_qoe = [v["qoe"]["qoe_index"] for v in honest]
     bitrate = [v["qoe_full"]["rendered_quality_kbps"] for v in honest]
     decoder_errors = [v["client"] for v in honest if any(
         e["type"] == "media_error" and "DECODE" in str(e.get("message", ""))
@@ -28,13 +29,19 @@ def describe(run):
              cdn1_effective_share_analysis=effective_shares(run, 4)["cdn-1"],
              unit_cost_usd_per_gb_analysis=unit_cost(run),
              mean_qoe_full=mean(qoe) if all(v is not None for v in qoe) else None,
+             mean_qoe_after_attack=mean(post_qoe) if all(v is not None for v in post_qoe) else None,
              undefined_qoe_clients=[v["client"] for v in honest if v["qoe_full"]["qoe_index"] is None],
              decoder_error_clients=decoder_errors,
+             media_errors=sum(v.get("media_errors", 0) for v in honest),
+             recovery_attempts=sum(v.get("recovery_attempts", 0) for v in honest),
+             recovery_successes=sum(v.get("recovery_successes", 0) for v in honest),
+             recovery_failures=sum(v.get("recovery_failures", 0) for v in honest),
              mean_bitrate_full=mean(bitrate) if all(v is not None for v in bitrate) else None,
              mean_bitrate_before_attack=float(mean(bitrate_series[1:boundary])),
              mean_bitrate_after_attack=float(mean(bitrate_series[boundary:])),
              qoe_at_attack=float(qoe_series[boundary]), qoe_at_end=float(qoe_series[-1]),
              mean_no_progress_full=mean(v["qoe_full"]["no_progress_seconds"] for v in honest),
+             mean_no_progress_after_attack=mean(v["qoe"]["no_progress_seconds"] for v in honest),
              mean_buffer_at_attack=mean(v["buffer_at_attack_seconds"] for v in honest)
              if all("buffer_at_attack_seconds" in v for v in honest) else None,
              terminal_failures=sum(v["qoe_full"]["terminal_failure"] for v in honest))
@@ -50,6 +57,8 @@ def main():
     if control is None or attack is None:
         parser.error("Both pilots must be valid completed runs")
     c, a = control["summary"]["configuration"], attack["summary"]["configuration"]
+    if c.get("buffer_trace_version") != 5 or a.get("buffer_trace_version") != 5:
+        parser.error("Official QoE requires buffer traces; rerun these pilots")
     if (c["fault_sha256"] != a["fault_sha256"] or c["malicious_count"] != 0
         or a["malicious_count"] != 3 or c["seconds"] != a["seconds"]
         or c["measurement_start"] != a["measurement_start"]
