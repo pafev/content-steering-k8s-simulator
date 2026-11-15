@@ -1,5 +1,4 @@
-# QoE pilot: CDN-1 remains good; CDN-2 and CDN-3 have added response delay.
-# Calibrate with isolated clean and attack runs before using this in a matrix.
+# QoE pilot: compromise between steering sensitivity and slow alternatives.
 apiVersion: net-chaos-simulator.pafev.dev/v1
 kind: NetworkChaos
 metadata:
@@ -12,7 +11,7 @@ spec:
     labels:
       matchLabels:
         app: dash-client
-  delay: 4ms
+  delay: 100ms
 ---
 apiVersion: net-chaos-simulator.pafev.dev/v1
 kind: NetworkChaos
@@ -26,7 +25,7 @@ spec:
     labels:
       matchLabels:
         app: dash-client
-  delay: 270ms
+  delay: 600ms
 ---
 apiVersion: net-chaos-simulator.pafev.dev/v1
 kind: NetworkChaos
@@ -40,4 +39,4 @@ spec:
     labels:
       matchLabels:
         app: dash-client
-  delay: 250ms
+  delay: 600ms
