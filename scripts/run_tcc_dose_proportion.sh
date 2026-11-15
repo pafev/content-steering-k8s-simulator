@@ -12,8 +12,8 @@ mkdir -p "$out"
 "$runner" - "$fault" "$out" <<'PY'
 import hashlib, json, pathlib, random, sys
 fault, root = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
-cells = ([(3, t) for t in (90, 200, 340, 530, 800, 1200)] +
-         [(m, t) for m in (1, 5) for t in (530, 800)])
+cells = ([[3, t] for t in (90, 200, 340, 530, 800, 1200)] +
+         [[m, t] for m in (1, 5) for t in (530, 800)])
 plan = dict(fault_sha256=hashlib.sha256(fault.read_bytes()).hexdigest(),
             cells=cells, clients=10, seconds=120, attack_delay=40,
             measurement_start=40, reward_lambda=10, max_video_kbps=3000)

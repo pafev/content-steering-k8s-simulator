@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Six shared controls; two delayed M=3 attacks for each declared TTLB.
+# Six shared controls; four delayed M=3 attacks for each declared TTLB.
 set -euo pipefail
 
 if (($# < 2)); then
@@ -16,7 +16,7 @@ fi
 shift 2
 doses=("$@")
 if ((${#doses[@]} == 0)); then
-  echo "Supply at least three TTLB doses explicitly; choose them after calibrating the scenario" >&2
+  echo "Supply at least one calibrated TTLB dose explicitly" >&2
   exit 2
 fi
 if [[ ! -f "$fault" ]]; then
@@ -35,8 +35,8 @@ try:
     doses = sorted(int(value) for value in sys.argv[4:])
 except ValueError as error:
     raise SystemExit(f"Invalid TTLB: {error}")
-if len(doses) < 3 or len(doses) != len(set(doses)) or doses[0] <= 0:
-    raise SystemExit("Supply at least three distinct positive TTLBs")
+if not doses or len(doses) != len(set(doses)) or doses[0] <= 0:
+    raise SystemExit("Supply distinct positive TTLBs")
 dose_file = root / "doses.txt"
 content = "".join(f"{value}\n" for value in doses)
 if dose_file.exists() and dose_file.read_text() != content:
@@ -45,21 +45,34 @@ dose_file.write_text(content)
 scenario_file = root / "scenario.json"
 scenario = {"fault_sha256": hashlib.sha256(fault.read_bytes()).hexdigest(),
             "ttlb_ms": doses, "malicious_count": 3, "reward_lambda": 10,
-            "max_video_kbps": max_video_kbps}
+            "max_video_kbps": max_video_kbps, "buffer_trace_version": 5}
 if scenario_file.exists() and json.loads(scenario_file.read_text()) != scenario:
     raise SystemExit(f"Different scenario already recorded in {scenario_file}; use a new output root")
 scenario_file.write_text(json.dumps(scenario, indent=2) + "\n")
 order_file = root / "order.txt"
 if not order_file.exists():
-    attacks = doses * 2
+    attacks = doses * 4
     random.Random(20261106).shuffle(attacks)
-    controls_at = {round(index * len(attacks) / 6) for index in range(6)}
     order = []
-    for index, ttlb in enumerate(attacks):
-        if index in controls_at:
-            order.append("control -")
-        order.append(f"attack {ttlb}")
+    assigned = 0
+    for control in range(6):
+        order.append("control -")
+        target = round((control + 1) * len(attacks) / 6)
+        while assigned < target:
+            order.append(f"attack {attacks[assigned]}")
+            assigned += 1
     order_file.write_text("\n".join(order) + "\n")
+else:
+    order = order_file.read_text().splitlines()
+    counts = {dose: order.count(f"attack {dose}") for dose in doses}
+    if order.count("control -") != 6 or len(order) != 6 + sum(counts.values()) or any(
+        count not in (2, 4) for count in counts.values()
+    ):
+        raise SystemExit(f"Unexpected run order in {order_file}")
+    missing = [dose for dose in doses for _ in range(4 - counts[dose])]
+    if missing:
+        random.Random(20261115).shuffle(missing)
+        order_file.write_text("\n".join(order + [f"attack {dose}" for dose in missing]) + "\n")
 PY
 
 if [[ "${QOE_PLAN_ONLY:-0}" == 1 ]]; then
@@ -79,15 +92,19 @@ for path in root.glob('*/multi-*/summary.json'):
         cfg = summary['configuration']
         cache = json.loads((path.parent / 'cache-validation.json').read_text())
         viewers = {item['client']: item for item in summary['viewers']}
-        complete_qoe = all(viewers[i]['qoe']['qoe_index'] is not None for i in range(4, 11))
+        complete_qoe = all('qoe' in viewers[i] and
+                           'qoe_index' in viewers[i]['qoe']
+                           for i in range(4, 11))
     except (KeyError, ValueError, OSError):
         continue
     if (summary.get('success') and complete_qoe and not cache.get('cached_non_hit_responses')
         and cfg.get('fault_sha256') == fault_hash and cfg.get('strategy') == 'ucb1'
         and cfg.get('clients') == 10 and cfg.get('reward_lambda') == 10
         and cfg.get('max_video_kbps', 1500) == max_video_kbps
+        and cfg.get('buffer_trace_version') == 5
         and cfg.get('seconds') == 120 and cfg.get('measurement_start') == 40
         and cfg.get('replicate') == 1 and cfg.get('allow_viewer_failure')
+        and cfg.get('bounded_start') and cfg.get('induce_media_error_at') is None
         and cfg.get('require_fresh_cache')
         and ((kind == 'control' and cfg['malicious_count'] == 0)
              or (kind == 'attack' and cfg['malicious_count'] == 3
@@ -124,12 +141,12 @@ while read -r kind ttlb; do
   "$runner" scripts/multi_client.py --strategy ucb1 --clients 10 \
     --seconds 120 --measurement-start 40 --reward-lambda 10 --replicate 1 \
     --max-video-kbps "$max_video_kbps" \
-    --require-fresh-cache --allow-viewer-failure \
+    --bounded-start --require-fresh-cache --allow-viewer-failure \
     --fault-manifest "$fault" --output "$out" \
     "${attack_args[@]}" "${warmup[@]}"
   started=$((started + 1))
   if ! has_run "$kind" "$ttlb" "$target"; then
-    echo "Run finished without complete honest-client QoE: $kind $ttlb" >&2
+    echo "Run finished without valid honest-client measurements: $kind $ttlb" >&2
     exit 1
   fi
 done < "$out/order.txt"
