@@ -54,33 +54,162 @@ controles. Registrar a fração de feedback **aceito e falsificado** na CDN-alvo
 ou o segmento. Mostrar prioridade temporal em 0–120 s e
 `D_steer`/`Delta_egress_cost` em 40–120 s.
 
-**3. Condições de degradação de QoE.** Avaliar em pilotos separados NetChaos
-12/900/900 ms com TTLB falso de 9.000 ms e 240/500/500 ms com TTLB falso de
-5.000 ms. Usar primeiro pilotos de 60 s com ataque após 20 s; os runs finais
-mantêm 120 s e ataque após 40 s. Manter o início sequencial dos clientes e
-os demais parâmetros da etapa 1. O vídeo tem 182,8 s: verificar se o cliente
+**3. Condições de degradação de QoE.** Avaliar separadamente o caso de CDN-1
+muito mais rápida que as alternativas e o caso de três CDNs lentas com CDN-1
+melhor. Os pontos iniciais foram 12/900/900 ms com TTLB falso de 9.000 ms e
+300/500/500 ms com TTLB falso de 5.000 ms. Usar primeiro pilotos de 60 s com
+ataque após 20 s; os runs finais mantêm 120 s e ataque após 40 s. Nesta etapa,
+preparar todos os players antes de disparar `play()` em sequência de 1 s
+(`--bounded-start`), registrando o intervalo real entre os disparos. As etapas
+1–2 mantêm seu início sequencial atual. O vídeo tem 182,8 s: verificar se o cliente
 mais adiantado não alcançará o fim natural durante os 120 s finais. Calibrar
 controle estável,
 desvio de prioridade e de rota efetiva sob ataque, e queda de QoE dos honestos.
 Se um candidato não produzir o efeito, testar outros valores de latência em
 pilotos identificados e registrar a seleção; congelar os cenários escolhidos
 antes dos runs finais. Para cada cenário selecionado, fazer seis controles e
-dois ataques independentes. Exibir bitrate, índice de QoE e avanço por cliente
+quatro ataques independentes. Exibir bitrate, índice de QoE e avanço por cliente
 honesto em 0–120 s, incluindo tempo sem progresso, rebuffer e falhas
 terminais. A escolha adaptativa ilustra **quando e como** a queda pode ocorrer;
 não estima sua frequência em redes não selecionadas.
 
-Os pilotos até aqui não fixaram um cenário de QoE para a amostra final.
-Diferenças já presentes antes do ataque e erros de decodificação não são
-evidência de queda causada pelo envenenamento. Se a grade de latências não
-produzir um cenário válido sob as condições fixas, revisar explicitamente uma
-condição do desenho antes de executar a série final, em vez de selecionar um
-piloto favorável por acaso.
+Os pilotos de 9/11/2026 ainda não fixaram um cenário para a amostra final.
+Em 12/900/900, o desvio de rota foi pequeno e o buffer amortizou o ataque.
+Em 300/500/500, dois pares curtos tiveram diferenças pequenas e variáveis;
+o par de 120 s teve QoE pós-ataque praticamente igual à do controle.
+300/800/800 já prejudicou o controle; 150/900/900 e o controle de 120 s
+em 250/700/700 tiveram falhas terminais antes de qualquer ataque.
+300/650/650 mostrou menor QoE no ataque curto, mas essa diferença já existia
+antes do ataque e a fração efetiva da CDN-1 aumentou. Esses resultados são
+pilotos, não réplicas finais. Diferenças anteriores ao ataque e falhas no
+controle não são evidência de queda causada pelo envenenamento. Revisar
+explicitamente uma condição da etapa 3 antes de executar sua série final.
+
+Na recalibração com o player recuperável, manter os buffers padrão, `M=3`,
+UCB1 e `lambda=10`. Após validar uma falha de mídia induzida em piloto
+descartável, testar pares de 60 s/20 s nas famílias CDN-1 rápida com alternativas
+acima de 900 ms e três CDNs lentas, incluindo 250/700/700 ms e pontos próximos.
+Começar com TTLB falso de 20.000 ms: com segmento de 4 s, a recompensa falsa
+já é aproximadamente 0,020. Só aumentar a dose se um resultado observado
+justificar. Levar a pilotos de 120 s/40 s apenas cenários com controle saudável,
+mudança efetiva de rota e queda de QoE posterior ao ataque. Congelar manifesto,
+dose e condições antes da amostra final; não alterar o buffer para produzir
+queda. Se nenhum cenário passar, relatar esse limite para `M=3` e UCB1.
+No piloto descartável de falha induzida com um cliente e 35 s,
+`results/qoe-recovery-pilot/20261111T004109Z-b3906a55/`, houve uma tentativa e
+uma retomada de 7,84 s, sem falha terminal ou miss de cache. Os pares curtos
+foram executados antes do ajuste final que espera o erro fatal do dash.js. Um
+segundo piloto descartável de 25 s com esse gatilho está em
+`results/qoe-recovery-pilot-v2/20261111T005503Z-ff5eed41/`: erro nativo,
+erro fatal do dash.js, uma tentativa, retomada de 7,87 s e nenhum miss de cache.
+O par de 60 s/20 s
+em 12/900/900 ms com TTLB falso de 20.000 ms está em
+`results/qoe-recovery-calibration/12-900-900/`: o controle teve QoE média
+pós-20 s de 0,928 e o ataque, 0,910 nos sete slots comparáveis. A rota efetiva
+da CDN-1 caiu de 1,000 para 0,895, mas a QoE no ataque já era menor antes dos
+20 s; este par não valida uma queda posterior causada pelo ataque.
+O par curto em 250/700/700 ms, no mesmo diretório de calibração, teve controle
+sem falhas terminais, rota efetiva da CDN-1 de 0,688 (controle) contra 0,446
+(ataque), e QoE média pós-20 s de 0,880 contra 0,808. Antes dos 20 s, o run de
+ataque tinha QoE maior que o controle. É candidato para piloto de 120 s/40 s,
+ainda não um cenário congelado nem uma réplica final.
+O par longo de 120 s/40 s confirmou 250/700/700 como cenário selecionado:
+controle válido, sem erros de mídia ou falhas terminais, rota efetiva da CDN-1
+de 0,742 para 0,532 no ataque e QoE pós-40 s de 0,909 para 0,854. A QoE
+pré-ataque era maior no run de ataque (0,638 contra 0,558). Artefatos em
+`results/qoe-recovery-calibration/250-700-700/long-{control,attack}/`.
+Congelar 250/700/700 ms, TTLB falso de 20.000 ms, dez clientes, `M=3`, UCB1,
+`lambda=10`, teto 3.000 kb/s, 120 s/40 s e `--bounded-start` para a série
+final: seis controles e quatro ataques independentes, sem reutilizar estes pilotos.
+Esses pilotos não tiveram erro de mídia nos dez clientes; a espera de 3 s
+introduzida posteriormente para um erro fatal não altera seus desfechos.
+O diretório `results/qoe-final/250-700-700/` contém somente o plano, ainda sem
+runs finais. Reconstruir e carregar a imagem do cliente antes de iniciar essa série.
+Um terceiro piloto descartável de um cliente e 25 s, em
+`results/qoe-recovery-grace-pilot/`, validou a espera após erro fatal: 3,002 s
+entre `recovery_wait` e `recovery_attempt`, retomada 0,773 s depois, 4,504 s
+sem avanço na janela completa, sem falha terminal, erro JavaScript ou miss de
+cache.
 
 **Trabalhos complementares.** Comparações com epsilon-greedy, LinUCB e
 `random`, falsificação de outros campos CMCD e outras funções de recompensa
-ficam fora da amostra principal. Uma camada de proteção será definida e
-avaliada posteriormente, com controles próprios para cada modo.
+ficam fora da amostra principal. A proteção da etapa 2 é especificada abaixo.
+
+## Etapa 4: proteção do aprendizado nas condições das etapas 1–2
+
+**Hipótese.** Rejeitar feedback com TTLB fora de uma faixa de referência e
+isolar sessões repetidamente atípicas deve reduzir o desvio de prioridade e
+custo observado na etapa 2. A regra é bilateral, mas a eficácia experimental
+será demonstrada apenas para a falsificação **para cima** já estudada. Não
+extrapolar para valores falsos plausíveis, outros campos ou ataques distribuídos.
+O [CTA-5004-B](https://cta-wave.github.io/Resources/common-media-client-data--cta-5004-b.html)
+alerta que players maliciosos podem enviar dados falsos; trabalhos sobre
+[bandits com recompensas contaminadas](https://arxiv.org/abs/2002.07214)
+motivam limitar a influência das observações, mas suas garantias não se
+transferem automaticamente para este UCB1 nem para o limiar proposto.
+
+**Defesa.** O módulo lógico fica no serviço de telemetria, antes da atualização
+do modelo compartilhado; o CSS continua apenas ordenando as CDNs. Para relato
+correlacionado `e=rr`, `ot=v`, `rc=2xx`, ignorar na aprendizagem valores de TTLB
+`<p1` ou `>p99` da CDN: não incrementar nem recompensa nem número de observações.
+Auditar o original, limites usados e motivo; deduplicar também relatos rejeitados.
+Falhas (`rc=0`, 4xx/5xx) mantêm a recompensa zero. Entre os últimos cinco relatos
+de vídeo 2xx elegíveis de uma sessão, três rejeições por percentil colocam seu feedback em
+quarentena até o fim da sessão, sem bloquear a reprodução. Isso classifica
+comportamento atípico, não identifica fraude; novo `sid` pode contornar o estado.
+
+Obter a referência inicial de seis pilotos honestos independentes, sob as mesmas
+condições da etapa 2, preservando todos os TTLBs de vídeo 2xx aprendidos por CDN.
+Calcular p1/p99 pelo método de posto `ceil(p×N)` sobre a referência inicial
+combinada com relatos aceitos nos últimos **30 s** do mesmo run. Os pilotos não
+entram na amostra final. Arquivar amostra, hash e versão. A referência inicial
+domina a janela curta deste simulador: nos controles anteriores cada CDN teve
+cerca de 98–183 relatos em 120 s. Em produção, estratificar por CDN, classe
+de rede, cache e perfil de objeto quando houver amostra suficiente.
+
+Uma janela menor responde mais rápido a mudanças reais, mas produz caudas mais
+instáveis e é mais fácil de contaminar; uma maior reduz variação amostral, mas
+responde lentamente e conserva valores contaminados por mais tempo. Atualizar
+somente com relatos aceitos reduz deslocamentos bruscos, mas limita adaptação a
+novas condições reais. A contaminação gradual do limiar permanece possível;
+discutir essa brecha sem alegar proteção completa. A fração de relatos honestos
+rejeitados em redes heterogêneas fica como limite de validade externa, não como
+experimento adicional obrigatório deste TCC.
+
+**Experimento.** Executar apenas a etapa 2: dez clientes, UCB1, `lambda=10`,
+720p/3.000 kb/s, 120 s/40 s, NetChaos 4/12/9 ms, `M=1/3/5` e TTLB falso
+530/800 ms. Seis controles e dois ataques por cada uma das seis células dão
+18 runs protegidos válidos, em raiz separada. Comparar aos runs desprotegidos
+já arquivados. Preservar slots honestos `M+1..10`, janelas, fórmulas e critérios
+de validade; controles são compartilhados entre células de cada modo. Arquivar
+plano, ordem, manifesto e hash da referência, sem repetição seletiva por efeito.
+
+Para cada célula, calcular o efeito ataque menos média dos controles **dentro
+do mesmo modo** e depois a diferença entre efeitos com e sem proteção para
+`D_steer`, `Delta_egress_cost` e QoE. Mostrar valores por run e curvas 0–120 s,
+além da rota efetiva, fração de feedback falsificado **aceito** e distribuição
+de recompensas. Não tratar os seis controles
+compartilhados como 60 controles independentes. O run é a réplica; clientes e
+segmentos são observações internas. Como as séries são sequenciais, conferir
+deriva de recursos, cache e tempos efetivos antes de atribuir diferenças à
+defesa. A QoE pode permanecer estável mesmo com melhoria de steering/custo;
+isso é resultado, não falha do experimento.
+
+**Critério de utilidade.** A defesa é útil neste cenário se reduzir de forma
+reprodutível os efeitos de steering/custo nas células em que o ataque os elevou,
+sem desvio material de rota ou QoE nos controles honestos. Relatar células sem
+ganho e dependência da referência; dois ataques por célula sustentam descrição, não estimativa precisa de
+eficácia geral. Não afirmar que protege qualquer implantação de Content
+Steering, pois o protocolo não impõe esta regra de aprendizado.
+
+**Alternativas para discussão.** Blacklist de IP pode bloquear usuários
+legítimos que compartilham ou mudam de endereço. Logs de CDN podem auxiliar
+na investigação de sessões sinalizadas, caso haja correlação por requisição e
+entrega confiável; tempo do servidor não equivale ao TTLB do player. Logs não
+capturam diretamente buffer, ABR, rebuffer ou reprodução, motivo para manter
+CMCD/RUM como fonte complementar. K-means pode ser estudado para padrões
+multivariados, mas clusters não provam desonestidade e exigem atributos, número
+de grupos e regra de ação. Essas alternativas não integram a implementação.
 
 ## Medidas e raciocínio causal
 
@@ -105,12 +234,27 @@ servidos** por cada CDN complementa `D_steer`: a prioridade pode mudar sem mudan
 correspondente de rota. O custo é uma projeção unitária sob tarifas escolhidas, não uma
 fatura real; o volume baixado também pode diferir entre runs.
 
-Para clientes honestos, o índice operacional de QoE é a fração do período observado com progresso
-multiplicada pelo bitrate exibido médio, ponderado pelo tempo com progresso, dividida
-pelo teto ABR do run. Comparar apenas o mesmo vídeo e teto; não chamá-lo de MOS ou
-escala perceptual validada. Exibir tempo sem progresso, rebuffer, qualidade exibida,
-pausa e falha terminal para explicar o índice. Os gráficos temporais cobrem
-0–120 s desde o limite comum do run e usam índice acumulado até cada instante.
+Para clientes honestos, o único índice operacional de QoE é
+`qoe_index = fração com progresso × bitrate exibido médio / teto ABR ×
+(0,75 + 0,25 × média[min(buffered_ahead/18 s, 1)])`, com as médias
+ponderadas pelo tempo com progresso.
+Assim, reserva inferior a 18 s reduz o índice antes de um travamento; com
+qualidade constante, um segundo sem progresso pesa quatro vezes mais que um
+segundo com reserva zerada. O limiar acompanha o `bufferTimeDefault=18 s` do
+dash.js; na qualidade máxima o alvo do player é 30 s, mas o limiar da análise
+permanece fixo em 18 s. O peso 0,25 não é um parâmetro perceptual validado.
+Comparar apenas o mesmo vídeo e teto; não chamar o índice de MOS ou escala
+perceptual validada. Exibir tempo sem progresso, rebuffer, qualidade exibida,
+pausa e falha terminal para explicá-lo. O rebuffer integra a perda de tempo
+com progresso; sua duração é apresentada separadamente. Os gráficos temporais
+cobrem 0–120 s desde o limite comum do run e usam índice acumulado.
+Nos 26 runs de `results/tcc-final-recovery-4-12-9/`, a reserva é reconstruída
+dos snapshots e dos relatos CMCD de áudio e vídeo. Entre leituras, o cálculo
+usa o menor valor compatível com consumo linear do buffer e sem esvaziamento
+súbito, condição adotada para essa série. A reconstrução é conferida contra
+o snapshot aos 40 s; `plots/qoe-clients.csv` registra a origem de cada valor.
+Os `summary.json` brutos são preservados. O `qoe_index` oficial recalculado
+aparece nos CSVs e gráficos de análise, sem repetir os runs 1–2.
 Os players iniciam em sequência antes desse limite, de modo que partida e buffer
 prévio podem diferir entre slots; registrar essa condição na interpretação. A janela
 40–120 s serve somente aos cálculos finais de `D_steer` e custo. O gráfico
@@ -214,9 +358,9 @@ s.
 
 O runner `scripts/multi_client.py` executa controles e ataques e grava QoE em
 40–120 s e 0–120 s. `scripts/run_tcc_dose_proportion.sh` orquestra as etapas 1–2;
-`scripts/plot_tcc_series.py` analisa seus runs. A série final da etapa 3 depende
-de calibração. A proteção e os trabalhos
-complementares ainda não estão implementados. Consulte [simulations.md](simulations.md)
+`scripts/plot_tcc_series.py` analisa seus runs. A etapa 4 usa
+`scripts/calibrate_tcc_defense.sh` e `scripts/run_tcc_stage2_defended.sh`.
+Consulte [simulations.md](simulations.md)
 para comandos, calibração e retomada.
 
 Não misturar pilotos com amostra final nem tratar células com controles compartilhados
