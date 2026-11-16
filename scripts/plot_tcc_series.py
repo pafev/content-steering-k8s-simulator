@@ -345,6 +345,46 @@ def honest_qoe(run, first_honest):
     return float(np.mean(values)) if all(v is not None for v in values) else None
 
 
+def plot_stage_effects(cells, individual, stage, output):
+    """Show run-level observations and cell means for one protocol stage."""
+    fig, axes = plt.subplots(3, 1, figsize=(8, 10), sharex=True, constrained_layout=True)
+    x_key = "ttlb_ms" if stage == 1 else "m"
+    series_key = "m" if stage == 1 else "ttlb_ms"
+    series = [3] if stage == 1 else [530, 800]
+    for ax, (field, label, scale) in zip(axes, (
+        ("d_steer", "D_steer (pontos percentuais)", 100),
+        ("delta_c_usd_per_gb", "Δ custo (USD/GB)", 1),
+        ("delta_qoe", "Δ QoE 0–120 s (ataque − controle)", 1),
+    )):
+        show = ((lambda value: np.trunc(value * 1000) / 1000)
+                if field == "delta_qoe" else (lambda value: value * scale))
+        for value in series:
+            means = sorted((r for r in cells if r[series_key] == value
+                            and r[field] is not None), key=lambda r: r[x_key])
+            points = [r for r in individual if r[series_key] == value
+                      and r[field] is not None]
+            label_series = f"M={value}" if stage == 1 else f"TTLB {value} ms"
+            line, = ax.plot([r[x_key] for r in means],
+                            [show(r[field]) for r in means], marker="o",
+                            label=label_series)
+            ax.scatter([r[x_key] for r in points],
+                       [show(r[field]) for r in points], color=line.get_color(),
+                       s=18, alpha=0.55)
+        ax.axhline(0, color="gray", linewidth=0.8)
+        ax.set_ylabel(label)
+        if field == "delta_qoe":
+            ticks = np.arange(-0.005, 0.0051, 0.001)
+            ax.set(ylim=(-0.005, 0.005))
+            ax.set_yticks(ticks, [f"{value:.3f}" for value in ticks])
+        ax.grid(alpha=0.2)
+        ax.legend(fontsize=8)
+    ticks = [90, 200, 340, 530, 800, 1200] if stage == 1 else [1, 3, 5]
+    axes[-1].set_xticks(ticks, [str(tick) for tick in ticks])
+    axes[-1].set_xlabel("TTLB falso (ms)" if stage == 1 else "Clientes modificados (M)")
+    fig.savefig(output, dpi=150)
+    plt.close(fig)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
@@ -527,6 +567,29 @@ def main():
         ax.legend()
         fig.savefig(output / filename, dpi=150)
         plt.close(fig)
+    for stage in (1, 2):
+        stage_output = output / f"etapa-{stage}"
+        stage_output.mkdir(exist_ok=True)
+        selected = (lambda m, dose: m == 3) if stage == 1 else (
+            lambda m, dose: m in (1, 3, 5) and dose in (530, 800)
+        )
+        stage_cells = [r for r in summary_rows if selected(r["m"], r["ttlb_ms"])]
+        stage_runs = [r for r in run_rows if selected(r["m"], r["ttlb_ms"])]
+        write_csv(stage_output / "cell-effects.csv", stage_cells)
+        write_csv(stage_output / "run-effects.csv", stage_runs)
+        plot_stage_effects(stage_cells, stage_runs, stage,
+                           stage_output / "effects.png")
+        for m in ((3,) if stage == 1 else (1, 3, 5)):
+            doses = [dose for count, dose in plan["cells"]
+                     if count == m and selected(count, dose)]
+            groups = [(dose, [r for r in runs if (
+                r["summary"]["configuration"]["malicious_count"],
+                r["summary"]["configuration"].get("attack_ttlb")) == (m, dose)])
+                for dose in doses]
+            for field in (("priority", "bitrate", "qoe") if stage == 1
+                          else ("priority",)):
+                plot_combined(controls, groups, m, field,
+                              stage_output / f"M{m}-{field}-timeline.png")
     print(f"Wrote {len(summary_rows)} cells to {output}")
 
 
