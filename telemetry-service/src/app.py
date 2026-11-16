@@ -32,7 +32,9 @@ def redis_unavailable(error):
 
 @app.get("/healthz")
 def healthz():
-    return jsonify(status="ok", redis=store.ping())
+    return jsonify(status="ok", redis=store.ping(),
+                   defense_enabled=store.defense.enabled,
+                   defense_reference_sha256=store.defense.sha256 if store.defense.enabled else None)
 
 
 @app.post("/v1/sessions")

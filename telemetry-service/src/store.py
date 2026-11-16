@@ -5,11 +5,13 @@ import math
 import os
 import re
 import time
+import uuid
 from urllib.parse import parse_qs, urlsplit
 
 import redis
 
 from cmcd import cmcd_value, extract_cmcd
+from defense import TelemetryDefense, WINDOW_SECONDS
 PATHWAYS = ["cdn-1", "cdn-2", "cdn-3"]
 STRATEGIES = {"fixed", "random", "epsilon_greedy", "ucb1", "linucb"}
 IDENTIFIER = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -30,11 +32,12 @@ def pathway_from_url(url):
 
 
 class TelemetryStore:
-    def __init__(self, connection=None):
+    def __init__(self, connection=None, defense=None):
         self.redis = connection or redis.Redis.from_url(
             os.getenv("REDIS_URL", "redis://redis:6379/0"), decode_responses=True,
             socket_connect_timeout=1, socket_timeout=1,
         )
+        self.defense = defense or TelemetryDefense()
 
     def ping(self):
         return bool(self.redis.ping())
@@ -50,7 +53,9 @@ class TelemetryStore:
         config = dict(strategy=strategy, seed=seed,
                       reward_lambda=float(reward_lambda),
                       policy_version=1, epsilon=0.2, linucb_alpha=1.0,
-                      ucb1_bonus="sqrt(2*ln(completed_observations)/arm_observations)")
+                      ucb1_bonus="sqrt(2*ln(completed_observations)/arm_observations)",
+                      defense_enabled=self.defense.enabled,
+                      defense_reference_sha256=self.defense.sha256 if self.defense.enabled else None)
         session_key, config_key = f"session:{sid}", f"run:{run_id}:config"
         with self.redis.pipeline() as pipe:
             while True:
@@ -173,25 +178,63 @@ class TelemetryStore:
                           hashlib.sha256(f"{url}|{event.get('ts')}".encode()).hexdigest())
         seen_key = f"run:{run_id}:response:{sid}:{observation_id}"
         model_key = f"run:{run_id}:model:{pathway}"
+        defended = self.defense.enabled
+        window_key = f"run:{run_id}:defense:window:{pathway}"
+        history_key = f"run:{run_id}:defense:history:{sid}"
+        quarantine_key = f"run:{run_id}:defense:quarantine:{sid}"
         x0, x1 = decision["context"]
         with self.redis.pipeline() as pipe:
             while True:
                 try:
-                    pipe.watch(seen_key)
+                    pipe.watch(seen_key, *( (window_key, history_key, quarantine_key) if defended else () ))
                     if pipe.exists(seen_key):
                         return "already_observed"
+                    now = time.time()
+                    result = "learned"
+                    extra = {}
+                    history = []
+                    if defended:
+                        quarantined = bool(pipe.exists(quarantine_key))
+                        if quarantined:
+                            result = "quarantined"
+                        elif 200 <= status < 300:
+                            low, high, sample_count = self.defense.bounds(pipe, run_id, pathway, now)
+                            history = [int(value) for value in pipe.lrange(history_key, 0, -1)]
+                            abnormal, history, quarantine = self.defense.classify(
+                                history, duration, low, high)
+                            extra = dict(ttlb_ms=duration, p1_ms=low, p99_ms=high,
+                                         rolling_count=sample_count)
+                            if abnormal:
+                                result = "filtered"
+                            if quarantine:
+                                result = "quarantined"
                     pipe.multi()
                     pipe.set(seen_key, decision_id, ex=RUN_TTL)
-                    pipe.hincrby(model_key, "n", 1)
-                    for field, value in dict(reward_sum=reward, a00=x0*x0, a01=x0*x1,
-                                             a11=x1*x1, b0=reward*x0, b1=reward*x1).items():
-                        pipe.hincrbyfloat(model_key, field, value)
-                    pipe.expire(model_key, RUN_TTL)
-                    pipe.set(f"run:{run_id}:last_feedback", time.time(), ex=RUN_TTL)
-                    self._audit(pipe, run_id, "learning_update", event, decision=decision,
-                                pathway=pathway, reward=reward)
+                    if defended:
+                        if history:
+                            pipe.delete(history_key)
+                            pipe.rpush(history_key, *history)
+                            pipe.expire(history_key, SESSION_TTL)
+                        if result == "quarantined":
+                            pipe.set(quarantine_key, 1, ex=SESSION_TTL)
+                        if result == "learned" and 200 <= status < 300:
+                            pipe.zadd(window_key, {f"{duration}:{uuid.uuid4().hex}": now})
+                            pipe.zremrangebyscore(window_key, "-inf", now - WINDOW_SECONDS)
+                            pipe.expire(window_key, RUN_TTL)
+                        pipe.hincrby(f"run:{run_id}:defense:counts", result, 1)
+                        pipe.expire(f"run:{run_id}:defense:counts", RUN_TTL)
+                    if result == "learned":
+                        pipe.hincrby(model_key, "n", 1)
+                        for field, value in dict(reward_sum=reward, a00=x0*x0, a01=x0*x1,
+                                                 a11=x1*x1, b0=reward*x0, b1=reward*x1).items():
+                            pipe.hincrbyfloat(model_key, field, value)
+                        pipe.expire(model_key, RUN_TTL)
+                        pipe.set(f"run:{run_id}:last_feedback", now, ex=RUN_TTL)
+                    self._audit(pipe, run_id, "learning_update" if result == "learned" else "defense_filter",
+                                event, decision=decision, pathway=pathway, reward=reward,
+                                result=result, **extra)
                     pipe.execute()
-                    return "learned"
+                    return result
                 except redis.WatchError:
                     continue
 
@@ -204,6 +247,7 @@ class TelemetryStore:
             for pathway in PATHWAYS:
                 pipe.hgetall(f"run:{run_id}:{kind}:{pathway}")
         pipe.hgetall(f"run:{run_id}:cmcd:session")
+        pipe.hgetall(f"run:{run_id}:defense:counts")
         config, decision, last_feedback, *values = pipe.execute()
         return dict(
             run_id=run_id, config=json.loads(config) if config else None,
@@ -212,4 +256,5 @@ class TelemetryStore:
             cdn=dict(zip(PATHWAYS, values[:3])),
             cmcd=dict(zip(PATHWAYS + ["session"], values[3:6] + [values[9]])),
             model=dict(zip(PATHWAYS, values[6:9])),
+            defense=values[10],
         )

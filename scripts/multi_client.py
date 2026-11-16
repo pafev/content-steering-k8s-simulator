@@ -724,6 +724,9 @@ def observe(playwright, args, strategy, output, warmup=None):
                 video = learned_video_report(response.request.post_data, result)
                 if video:
                     video_reports.append(video)
+                    if args.capture_video_feedback:
+                        with (directory / "video-feedback.jsonl").open("a") as handle:
+                            handle.write(json.dumps(video) + "\n")
                 record("feedback", client, status=response.status, result=result)
             except Exception as error:
                 if client in modified:
@@ -1145,6 +1148,13 @@ def observe(playwright, args, strategy, output, warmup=None):
                         )
                     )
                 }
+                rejected_sequences = {
+                    int(match[1])
+                    for item in player["feedback"]
+                    if any(item["response"].get("results", {}).get(kind, 0)
+                           for kind in ("filtered", "quarantined"))
+                    if (match := re.search(r"(?:^|,)sn=(\d+)(?=,|$)", item["report"] or ""))
+                }
                 accepted_rewards = [
                     item["claimed_reward"]
                     for item in audit
@@ -1160,6 +1170,7 @@ def observe(playwright, args, strategy, output, warmup=None):
                         feedback=player["feedback"],
                         matched_deliveries=matched,
                         accepted_falsified=accepted,
+                        rejected_falsified=sum(item["sn"] in rejected_sequences for item in audit),
                         accepted_claimed_rewards=accepted_rewards,
                     )
                 )
@@ -1176,6 +1187,7 @@ def observe(playwright, args, strategy, output, warmup=None):
                 altered_reports=sum(len(item["audit"]) for item in details),
                 matched_deliveries=sum(item["matched_deliveries"] for item in details),
                 accepted_falsified=sum(item["accepted_falsified"] for item in details),
+                rejected_falsified=sum(item["rejected_falsified"] for item in details),
                 mean_accepted_claimed_reward=statistics.mean(
                     reward
                     for item in details
@@ -1184,7 +1196,7 @@ def observe(playwright, args, strategy, output, warmup=None):
                 if any(item["accepted_claimed_rewards"] for item in details)
                 else None,
             )
-            if not malicious["accepted_falsified"]:
+            if not malicious["accepted_falsified"] and not args.require_defense:
                 problems.append(
                     f"No falsified {args.malicious_cdn} report was accepted for learning"
                 )
@@ -1359,6 +1371,12 @@ def main():
     parser.add_argument(
         "--output", type=Path, default=ROOT / "results" / "multi-client"
     )
+    parser.add_argument("--capture-video-feedback", action="store_true",
+                        help="Save successful learned video TTLBs for defense calibration")
+    parser.add_argument("--require-defense", action="store_true",
+                        help="Require active telemetry defense for this run")
+    parser.add_argument("--expected-defense-sha256",
+                        help="Require the active telemetry reference to have this hash")
     parser.add_argument(
         "--malicious-count",
         type=int,
@@ -1444,6 +1462,15 @@ def main():
     wait_for_services()
     with ServiceForwards(output, warmup=not args.skip_warmup) as services:
         args.telemetry_base = services.bases["telemetry-service"]
+        with urlopen(f"{args.telemetry_base}/healthz", timeout=args.timeout) as response:
+            defense_health = json.load(response)
+        if args.require_defense and not defense_health.get("defense_enabled"):
+            raise RuntimeError("Telemetry defense is not enabled")
+        if args.expected_defense_sha256 and defense_health.get("defense_reference_sha256") != args.expected_defense_sha256:
+            raise RuntimeError("Telemetry defense reference differs from plan")
+        if args.capture_video_feedback and defense_health.get("defense_enabled"):
+            raise RuntimeError("Calibration requires telemetry defense disabled")
+        args.defense_reference_sha256 = defense_health.get("defense_reference_sha256")
         try:
             warmup = (
                 None

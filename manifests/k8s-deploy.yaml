@@ -68,6 +68,14 @@ spec:
         env:
         - name: REDIS_URL
           value: redis://redis:6379/0
+        - name: DEFENSE_ENABLED
+          value: "false"
+        - name: DEFENSE_REFERENCE_PATH
+          value: /etc/telemetry-defense/reference.json
+        volumeMounts:
+        - name: defense-reference
+          mountPath: /etc/telemetry-defense
+          readOnly: true
         ports:
         - containerPort: 30600
         - containerPort: 9000
@@ -78,6 +86,11 @@ spec:
             port: 30600
           initialDelaySeconds: 2
           periodSeconds: 5
+      volumes:
+      - name: defense-reference
+        configMap:
+          name: telemetry-defense-reference
+          optional: true
 ---
 apiVersion: v1
 kind: Service

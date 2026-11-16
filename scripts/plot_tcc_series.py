@@ -41,6 +41,19 @@ def write_csv(path, rows):
         writer.writerows(rows)
 
 
+def set_effect_ylim(ax, field, cells, individual):
+    """Keep small steering and cost changes in a meaningful symmetric frame."""
+    scales = {"d_steer": (100, 10, 5), "delta_c_usd_per_gb": (1, 0.01, 0.005)}
+    if field not in scales:
+        return
+    multiplier, minimum, step = scales[field]
+    values = [abs(float(row[field]) * multiplier) for row in (*cells, *individual)
+              if row[field] is not None and np.isfinite(row[field])]
+    extent = max(minimum, max(values, default=0) * 1.1)
+    bound = np.ceil(extent / step) * step
+    ax.set_ylim(-bound, bound)
+
+
 def load_run(path):
     summary = json.loads(path.read_text())
     if not summary.get("success"):
@@ -376,6 +389,8 @@ def plot_stage_effects(cells, individual, stage, output):
             ticks = np.arange(-0.005, 0.0051, 0.001)
             ax.set(ylim=(-0.005, 0.005))
             ax.set_yticks(ticks, [f"{value:.3f}" for value in ticks])
+        else:
+            set_effect_ylim(ax, field, cells, individual)
         ax.grid(alpha=0.2)
         ax.legend(fontsize=8)
     ticks = [90, 200, 340, 530, 800, 1200] if stage == 1 else [1, 3, 5]
@@ -467,7 +482,8 @@ def main():
                 cdn2_bytes_40_120=s["cdn_bytes_window"]["cdn-2"],
                 cdn3_bytes_40_120=s["cdn_bytes_window"]["cdn-3"],
                 falsified_share=s["malicious"]["accepted_falsified"]
-                / int(s["final"]["state"]["model"]["cdn-1"]["n"]),
+                / max(1, int(s["final"]["state"]["model"]["cdn-1"]["n"])),
+                rejected_falsified=s["malicious"].get("rejected_falsified", 0),
             )
             run_rows.append(row)
         group = run_rows[-2:]
@@ -556,18 +572,25 @@ def main():
                 alpha=0.5,
             )
         ax.axhline(0, color="gray", linewidth=0.8)
-        ax.set(xscale="log", xlabel="TTLB falso (ms)", ylabel=label)
+        ax.set(xlabel="TTLB falso (ms)", ylabel=label)
         doses = sorted({dose for _, dose in plan["cells"]})
+        if len(doses) == 2:
+            margin = (doses[1] - doses[0]) * 0.12
+            ax.set_xlim(doses[0] - margin, doses[1] + margin)
+        else:
+            ax.set_xscale("log")
         ax.set_xticks(doses, [str(dose) for dose in doses])
         if field == "delta_qoe":
             ticks = np.arange(-0.005, 0.0051, 0.001)
             ax.set(ylim=(-0.005, 0.005))
             ax.set_yticks(ticks, [f"{value:.3f}" for value in ticks])
+        else:
+            set_effect_ylim(ax, field, summary_rows, run_rows)
         ax.grid(alpha=0.2)
         ax.legend()
         fig.savefig(output / filename, dpi=150)
         plt.close(fig)
-    for stage in (1, 2):
+    for stage in ((2,) if plan.get("defense_window_seconds") else (1, 2)):
         stage_output = output / f"etapa-{stage}"
         stage_output.mkdir(exist_ok=True)
         selected = (lambda m, dose: m == 3) if stage == 1 else (
