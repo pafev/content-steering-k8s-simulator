@@ -91,26 +91,59 @@ kind load docker-image --name kind pafev/content-steering:client-latest
 O runner grava `viewer-traces.json` com eventos nativos (`waiting`, `pause`,
 `error`), a pilha de chamadas JavaScript a `video.pause()`, e eventos oficiais
 do dash.js (`qualityChangeRendered`, `error`),
-além de amostras de avanço a cada 500 ms. Cada `summary.json` inclui, por
+além de amostras de avanço e reserva de buffer a cada 500 ms nos novos runs.
+Cada `summary.json` inclui, por
 player, `qoe`: fração da janela sem avanço, tempo pausado, falha terminal,
 bitrate de vídeo exibido ponderado pelo tempo com avanço e `qoe_index`.
-`rebuffer_seconds` fica em campo separado. O índice é a fração da janela com
-avanço multiplicada pelo bitrate exibido médio dividido pelo teto ABR do run
-(1.500 ou 3.000 kb/s). É um
-índice operacional para **o mesmo vídeo**, não MOS nem modelo perceptual
-validado. Fica `null` se houver avanço mas a cobertura de qualidade exibida
-for inferior a 95%; se não houver qualquer avanço, vale zero.
-O atraso de partida não integra esses desfechos.
+`rebuffer_seconds` fica em campo separado. O único `qoe_index` oficial é a
+fração da janela com avanço multiplicada pelo bitrate exibido médio dividido
+pelo teto ABR do run (1.500 ou 3.000 kb/s) e pelo fator
+`0,75 + 0,25 × buffer_health_factor`. `buffer_health_factor` é a média,
+durante o tempo com avanço, de
+`min(buffered_ahead / 18 s, 1)`. O limiar acompanha o
+`bufferTimeDefault=18 s` do dash.js empacotado. Na qualidade máxima, o alvo
+do player passa a `bufferTimeAtTopQuality=30 s`; o limiar do índice permanece
+fixo em 18 s para comparar todos os runs. Reserva abaixo de 18 s reduz o
+índice mesmo quando o vídeo avança.
+Por segundo equivalente, ausência total de reserva pesa no máximo um quarto
+de um segundo sem progresso. O peso 0,25 é uma escolha operacional, não um
+parâmetro perceptual calibrado.
+É um índice operacional para **o mesmo vídeo**, não MOS nem modelo perceptual
+validado. Fica `null` se faltar cobertura suficiente de qualidade ou buffer;
+se não houver avanço e houver traço de buffer, vale zero. O atraso de partida
+não integra esses desfechos. `low_buffer_seconds` e
+`buffer_reserve_mean_seconds` ficam separados. Traços sem amostras de buffer
+nem relatos CMCD suficientes não permitem calcular o índice oficial.
 
-Use `--allow-viewer-failure` somente nos pilotos de QoE: erro ou pausa
+Use `--allow-viewer-failure` nos pilotos e na futura série final de QoE: erro ou pausa
 posterior ao início da reprodução passa a ser um desfecho observado, mas
 falhas de infraestrutura, ausência de início e fim natural do vídeo ainda
 invalidam o run. O script histórico de matrizes não usa essa opção.
+Após erro fatal de mídia com reprodução já iniciada, o player faz uma única
+tentativa de reinicialização na mesma página e retoma da última posição válida.
+Após um erro fatal do dash.js, o cliente aguarda 3 s e cancela o reinício se
+a reprodução voltar a avançar. Um erro nativo de mídia persistente por 5 s
+também aciona a tentativa quando o dash.js não emite o evento fatal. Erros
+nativos resolvidos antes disso não provocam reinício.
+O `sid`, `run_id`, CMCD e o estado da falsificação permanecem. O traço registra
+`recovery_wait`, `recovery_cancelled`, `recovery_attempt`,
+`recovery_success`, `recovery_failure` ou
+`recovery_exhausted`; `summary.json` separa erros de mídia, tentativas,
+sucessos, falhas de recuperação e falhas terminais. O intervalo da recuperação
+entra no tempo sem avanço do índice de QoE, sem penalidade adicional. Eventos
+transitórios `waiting` e `stalled` não acionam reinício. Erros JavaScript
+continuam invalidando o run. Para validar esse mecanismo em piloto descartável,
+use `--induce-media-error-at 8` em um run curto com `--allow-viewer-failure`;
+esse gatilho nunca deve entrar nas matrizes ou na amostra final.
+Com `--bounded-start`, o runner prepara os dez players antes de pedir `play()`
+em sequência de 1 s. O campo `play_request_span_seconds` registra o intervalo
+entre o primeiro e o último pedido; sessões e feedback continuam isolados por
+`sid` e reunidos pelo mesmo `run_id`.
 
 Para uma comparação temporal separada, com seis controles e seis ataques
 independentes na mesma dose, use `plot_qoe_timeline.py`. O estudo de dose
-abaixo tem apenas dois ataques por TTLB e não gera essa figura. O script
-temporal usa as médias de run dos mesmos slots honestos (`M+1..10`). A faixa sombreada
+abaixo tem quatro ataques por TTLB e gera sua própria linha temporal. O script
+temporal separado usa as médias de run dos mesmos slots honestos (`M+1..10`). A faixa sombreada
 mostra o desvio padrão **entre runs**. O quarto painel mostra a diferença
 ataque−controle do tempo sem progresso acumulado, com intervalo bootstrap
 pontual de 95% reamostrando runs. Não interprete o primeiro instante em que
@@ -126,15 +159,18 @@ a faixa cruza zero como limiar causal preciso. O CSV vizinho ao PNG guarda os
 
 ## Orquestrador de dose existente
 
-`scripts/run_qoe_dose_response.sh` reutiliza `scripts/multi_client.py`, mas
-foi escrito para um estudo **específico**: seis controles, dois ataques por
-TTLB, dez clientes, `M=3`, UCB1, `lambda=10`, 120 s, ataque após 40 s e teto
-ABR de 720p/3.000 kb/s. O Bash intercala controles e registra ordem, doses,
+`scripts/run_qoe_dose_response.sh` reutiliza `scripts/multi_client.py` para
+um cenário previamente validado: seis controles, quatro ataques por TTLB
+declarado, dez clientes, `M=3`, UCB1, `lambda=10`, 120 s, ataque após 40 s,
+início limitado (`--bounded-start`) e teto ABR de 720p/3.000 kb/s. Aceita uma
+ou mais doses fixadas após a calibração. O Bash intercala controles e registra ordem, doses,
 SHA do manifesto e condições para retomada. Ele produz apenas os plots de QoE
 via `plot_qoe_dose_response.py`; ainda falta acrescentar steering, rota real
 e custo à análise da mesma série, como definido no
 [protocolo do TCC](research-protocol.md#próximas-alterações-de-código).
-As doses agora são obrigatórias no comando, após calibrar o cenário.
+As doses agora são obrigatórias no comando, após calibrar o cenário. Índices
+indefinidos por falta de qualidade exibida preservam o run e seus componentes;
+não provocam seleção de outra réplica.
 
 A grade anteriormente sugerida de TTLBs e os pilotos com o manifesto
 `manifests/qoe-pilot-netchaos.yaml` (4/270/250 ms) são exploratórios e não
@@ -163,14 +199,32 @@ bash scripts/run_qoe_dose_response.sh \
   800 1600 5000
 ```
 
-Esse comando executa doze runs válidos (seis controles, três doses com dois
-ataques cada) e pode demorar. Passe outra raiz ao mudar manifesto ou doses.
+Esse comando executa dezoito runs válidos (seis controles, três doses com quatro
+ataques cada) e pode demorar. Em uma raiz existente com dois ataques por dose,
+o script mantém os runs válidos, acrescenta dois ataques por dose ao `order.txt`
+e sobrescreve os plots após completar os runs faltantes. Passe outra raiz ao
+mudar manifesto ou doses.
 O script não é um runner genérico para proporção, política ou função de
 recompensa. Quando terminar, `plots/` contém `qoe-dose-response.png`,
 `no-progress.png`, `rebuffer.png`, `terminal-failures.png`,
-`rendered-quality.png`, `run-qoe.csv` e `dose-summary.csv`. Com dois ataques
+`rendered-quality.png`, `run-qoe.csv` e `dose-summary.csv`. Com quatro ataques
 por dose, as figuras são descritivas: não ajustar curva ou declarar um limiar
 exato.
+Nos gráficos de dose, a linha azul tracejada é a média dos seis controles;
+a faixa azul é média ± desvio padrão entre runs. O círculo vermelho maior
+marca a média dos ataques; círculos menores e mais claros mostram cada run
+na dose TTLB efetivamente usada. O plotter
+também aceita os resultados antigos com dois ataques por dose; o runner completa
+quatro antes de gerar os plots finais.
+`honest-clients-timeline.png` apresenta o bitrate exibido médio e o índice
+de QoE acumulado em 0–120 s, calculando primeiro a média dos clientes honestos
+em cada run e depois a média entre runs. `client-progress/` contém um gráfico
+por run, com o avanço dos sete clientes honestos, intervalos sem progresso,
+rebuffer e falhas terminais. `time-series-runs.csv` preserva as séries por run.
+O rebuffer já reduz o índice durante o tempo sem avanço; permanece também como
+desfecho separado. Nos novos runs, os gráficos também mostram a reserva de
+buffer. Use uma nova raiz para novos runs: o runner não mistura condições de
+coleta distintas na mesma série.
 
 ## Séries finais do TCC (etapas 1–3)
 
@@ -178,7 +232,7 @@ Primeiro calibre em 720p o manifesto 4/12/9 ms e os candidatos de QoE com
 `scripts/multi_client.py`. Guarde pilotos fora das raízes finais. Para cada
 candidato de QoE, execute um controle e um ataque **curtos**, com 60 s de
 reprodução e ataque após 20 s. Mantenha `M=3` e os demais parâmetros finais.
-Os players começam em sequência; examine a posição de reprodução e o buffer
+Na etapa 3, use `--bounded-start`; examine a posição de reprodução e o buffer
 de cada slot ao interpretar os pilotos.
 Use uma raiz separada por piloto e consulte
 `scripts/check_qoe_pilot.py <controle/multi-id> <ataque/multi-id>` para comparar
@@ -189,12 +243,12 @@ quais candidatos foram avaliados antes de congelar as séries finais.
 ```sh
 .venv/bin/python scripts/multi_client.py --strategy ucb1 --clients 10 \
   --seconds 60 --measurement-start 20 --reward-lambda 10 \
-  --max-video-kbps 3000 --require-fresh-cache --allow-viewer-failure \
+  --max-video-kbps 3000 --require-fresh-cache --allow-viewer-failure --bounded-start \
   --fault-manifest manifests/qoe-12-900-900.yaml \
   --output results/qoe-calibration-short/12-900-900/control
 .venv/bin/python scripts/multi_client.py --strategy ucb1 --clients 10 \
   --seconds 60 --measurement-start 20 --reward-lambda 10 \
-  --max-video-kbps 3000 --require-fresh-cache --allow-viewer-failure \
+  --max-video-kbps 3000 --require-fresh-cache --allow-viewer-failure --bounded-start \
   --fault-manifest manifests/qoe-12-900-900.yaml \
   --malicious-count 3 --attack-delay 20 --attack-ttlb 9000 \
   --output results/qoe-calibration-short/12-900-900/attack
@@ -203,24 +257,60 @@ quais candidatos foram avaliados antes de congelar as séries finais.
 Para as etapas 1–2, execute a série abaixo. Ela inclui as seis
 doses com `M=3` e as quatro células adicionais `M=1/5`, compartilhando seis
 controles (26 runs válidos). Repetir o mesmo comando retoma somente runs que
-atendam às condições registradas no `plan.json` e tenham traços de QoE.
-Índices indefinidos por cobertura insuficiente continuam nos resultados, com
-tempo sem avanço e falhas explícitos.
+atendam às condições registradas no `plan.json` e tenham traços de reprodução.
+Os 26 runs já feitos nessa raiz não registraram a reserva a cada 500 ms.
+O plotter reconstrói a reserva com os snapshots do player e os relatos CMCD
+de áudio e vídeo por segmento, supondo ausência de esvaziamento súbito entre
+leituras. Ele valida a reconstrução contra o snapshot aos 40 s e recalcula o
+único `qoe_index` oficial nos CSVs e gráficos de análise. Os `summary.json`
+originais permanecem intactos; `plots/qoe-clients.csv` guarda os valores por
+cliente e a origem do cálculo. Rota e custo não dependem dessa reconstrução.
 
 ```sh
 bash scripts/run_tcc_dose_proportion.sh \
-  manifests/risk-matrix-netchaos.yaml results/tcc-final/dose-proportion
+  manifests/risk-matrix-netchaos.yaml results/tcc-final-recovery-4-12-9
 ```
 
-Os cenários 12/900/900 e 240/500/500 ms continuam como pilotos, não como
-comandos finais aprovados. A série final de QoE será definida após validar um
-cenário; seus pilotos permanecem em raízes separadas.
+O cenário selecionado da etapa 3 é `manifests/qoe-250-700-700.yaml`, com TTLB
+falso de 20.000 ms. Seus pilotos permanecem em raízes separadas; a série final
+usa `results/qoe-final/250-700-700/` e ainda não foi executada.
 `TCC_PLAN_ONLY=1` imprime a ordem planejada sem executar.
 `plots/` contém as curvas 0–120 s, o avanço individual dos controles e ataques
 com `M=3` e CSVs de efeitos
 calculados em 40–120 s. As linhas finas nas curvas são runs individuais e
-a linha grossa é a média entre runs. O runner histórico de dose permanece
-separado e não deve ser misturado com esta amostra.
+a linha grossa é a média entre runs.
+`plots/etapa-1/` apresenta apenas `M=3` nas seis doses; `plots/etapa-2/`
+apresenta `M=1/3/5` somente em 530/800 ms. Cada pasta contém efeitos por
+célula e por run, um gráfico de efeitos com médias e runs individuais, e as
+curvas temporais pertinentes. Os seis controles e os ataques `M=3` em 530/800 ms
+são reutilizados nas duas etapas; as saídas anteriores em `plots/` permanecem.
+O runner histórico de dose permanece separado e não deve ser misturado com
+esta amostra.
+
+## Defesa da etapa 2
+
+Após reconstruir as imagens com `./setup.sh`, calibre a referência em seis
+pilotos honestos separados. O script salva os TTLBs brutos dos vídeos aprendidos,
+gera `reference.json`, monta essa referência no serviço de telemetria e ativa a
+defesa. Ele não executa a série final.
+
+```sh
+bash scripts/calibrate_tcc_defense.sh results/tcc-defense-calibration
+```
+
+Com a referência ativa, inicie os 18 runs protegidos da etapa 2 em segundo plano:
+
+```sh
+nohup bash scripts/run_tcc_stage2_defended.sh \
+  manifests/risk-matrix-netchaos.yaml results/tcc-defense-stage2-4-12-9 \
+  > /tmp/tcc-defense-stage2.log 2>&1 &
+```
+
+O runner verifica modo e hash da defesa, mantém `plan.json`/`order.txt` e
+retoma somente runs válidos. No fim, produz gráficos da etapa 2 e
+`plots/etapa-2/defense-comparison.csv`, comparando efeitos ataque menos controle
+com `results/tcc-final-recovery-4-12-9/`. Pilotos de calibração não são réplicas
+da série protegida.
 
 ## Read and plot results
 
