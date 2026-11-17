@@ -210,6 +210,40 @@ recompensa. Quando terminar, `plots/` contém `qoe-dose-response.png`,
 `rendered-quality.png`, `run-qoe.csv` e `dose-summary.csv`. Com quatro ataques
 por dose, as figuras são descritivas: não ajustar curva ou declarar um limiar
 exato.
+
+Para um cenário exploratório em que os mesmos três players modificados declaram
+TTLB reduzido nas CDNs 2 e 3, passe `--malicious-cdns cdn-2,cdn-3` antes do
+manifesto e use uma raiz de saída própria. Sem essa opção, o alvo permanece
+`cdn-1`. O alvo integra `scenario.json` e a validação da retomada; o mesmo
+parâmetro também é aceito por `scripts/multi_client.py`. Se o TTLB declarado
+ficar abaixo do TTFB medido, o player limita o TTFB declarado ao TTLB e audita
+ambos os valores. Reconstrua e carregue a imagem do cliente após alterar
+`cmcd-lie.js`. Exemplo após calibrar a dose em pilotos separados:
+
+```sh
+nohup bash scripts/run_qoe_dose_response.sh \
+  --malicious-cdns cdn-2,cdn-3 \
+  manifests/qoe-250-700-700.yaml results/qoe-final/cdn23-250-700-700-300 \
+  300 > /tmp/qoe-cdn23.log 2>&1 &
+```
+
+`300 ms` é apenas uma dose candidata: confirmar em piloto a fração de relatos
+aceitos, o desvio de rota efetiva e a QoE antes de fixar a série final.
+Na condição com CDNs 2 e 3, zero relatos falsificados aceitos é um resultado
+possível e fica registrado em `modified-players.json` e `summary.json`; não
+invalida o run se o script de falsificação estiver ativo. O runner rejeita uma
+imagem antiga do cliente que não reconheça a lista de CDNs.
+Este runner exige a defesa da telemetria desligada e verifica isso antes do
+warmup. Se uma execução protegida da etapa 4 tiver deixado
+`DEFENSE_ENABLED=true`, restaure o modo desprotegido e aguarde o rollout:
+
+```sh
+kubectl --context kind-kind set env deployment/telemetry-service DEFENSE_ENABLED=false
+kubectl --context kind-kind rollout status deployment/telemetry-service --timeout=180s
+```
+
+Depois, repita o mesmo comando e a mesma raiz: a execução inválida não conta
+como réplica e o runner retoma a ordem planejada.
 Nos gráficos de dose, a linha azul tracejada é a média dos seis controles;
 a faixa azul é média ± desvio padrão entre runs. O círculo vermelho maior
 marca a média dos ataques; círculos menores e mais claros mostram cada run

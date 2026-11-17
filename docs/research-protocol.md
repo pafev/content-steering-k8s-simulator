@@ -82,8 +82,8 @@ em 250/700/700 tiveram falhas terminais antes de qualquer ataque.
 300/650/650 mostrou menor QoE no ataque curto, mas essa diferença já existia
 antes do ataque e a fração efetiva da CDN-1 aumentou. Esses resultados são
 pilotos, não réplicas finais. Diferenças anteriores ao ataque e falhas no
-controle não são evidência de queda causada pelo envenenamento. Revisar
-explicitamente uma condição da etapa 3 antes de executar sua série final.
+controle não são evidência de queda causada pelo envenenamento. A revisão
+posterior selecionou 250/700/700 para a série final.
 
 Na recalibração com o player recuperável, manter os buffers padrão, `M=3`,
 UCB1 e `lambda=10`. Após validar uma falha de mídia induzida em piloto
@@ -123,19 +123,118 @@ Congelar 250/700/700 ms, TTLB falso de 20.000 ms, dez clientes, `M=3`, UCB1,
 final: seis controles e quatro ataques independentes, sem reutilizar estes pilotos.
 Esses pilotos não tiveram erro de mídia nos dez clientes; a espera de 3 s
 introduzida posteriormente para um erro fatal não altera seus desfechos.
-O diretório `results/qoe-final/250-700-700/` contém somente o plano, ainda sem
-runs finais. Reconstruir e carregar a imagem do cliente antes de iniciar essa série.
+As séries finais estão em subdiretórios de `results/qoe-final/`, separados por
+perfil NetChaos e TTLB declarado.
 Um terceiro piloto descartável de um cliente e 25 s, em
 `results/qoe-recovery-grace-pilot/`, validou a espera após erro fatal: 3,002 s
 entre `recovery_wait` e `recovery_attempt`, retomada 0,773 s depois, 4,504 s
 sem avanço na janela completa, sem falha terminal, erro JavaScript ou miss de
 cache.
 
+**Leitura das séries finais da etapa 3.** Cada linha abaixo reúne seis controles
+e quatro ataques válidos e independentes, com dez clientes, `M=3`, UCB1,
+`lambda=10`, 720p, 120 s/40 s e falsificação da CDN-1. A QoE é a média, entre
+runs, da média dos sete clientes honestos em 40–120 s; a rota é a fração de
+segmentos de vídeo 2xx desses clientes efetivamente servidos pela CDN-1 na
+mesma janela, calculada dos `events.jsonl` com os limites
+`observation_start`/`observation_end` de cada run. Pares controle → ataque
+pertencem à mesma série; séries com
+doses diferentes têm controles próprios.
+
+| NetChaos 1/2/3 (ms) | TTLB falso (ms) | QoE controle → ataque | Rota CDN-1 controle → ataque |
+| --- | ---: | ---: | ---: |
+| 250/700/700 | 10.000 | 0,899 → 0,887 | 0,678 → 0,610 |
+| 250/700/700 | 12.000 | 0,897 → 0,879 | 0,690 → 0,587 |
+| 250/700/700 | 20.000 | 0,922 → 0,836 | 0,687 → 0,540 |
+| 100/900/900 | 20.000 | 0,921 → 0,911 | 0,894 → 0,779 |
+
+Os artefatos são `results/qoe-final/250-700-700-{10000,12000,20000}/` e
+`results/qoe-final/100-900-900-20000/`; `plots/run-qoe.csv` preserva os
+valores individuais. Em 250/700/700, nenhuma CDN sustentou QoE unitária em
+todos os controles; as alternativas tinham TTLB percebido maior que a CDN-1.
+Com 10.000 e 12.000 ms, a rota CDN-1 caiu cerca de 6,8 e 10,3 pontos
+percentuais, respectivamente, mas as diferenças médias de QoE foram apenas
+−0,012 e −0,018. Alterar o steering não implicou perda de QoE na mesma
+magnitude. Na série de 20.000 ms, a rota CDN-1 caiu cerca de 14,7 pontos
+percentuais e a diferença média de QoE foi
+−0,086; os quatro ataques ainda variaram de 0,724 a 0,999. A QoE média antes
+dos 40 s já era menor nos ataques dessa série (0,605 contra 0,645 nos
+controles), exigindo cautela na atribuição de toda a diferença posterior ao
+envenenamento. A comparação é compatível com perda de QoE sob ataque forte
+neste cenário selecionado, sem estabelecer um limiar exato de dose.
+Nas séries de 12.000 ms e 100/900/900, um controle teve falha terminal e os
+ataques não tiveram; isso também limita a leitura das médias de QoE.
+
+Em 100/900/900, a CDN-1 permaneceu em cerca de 78% das rotas de vídeo dos
+honestos durante o ataque, e a diferença média de QoE foi −0,009. A série
+12/900/900 com 20.000 ms, arquivada separadamente, também teve diferença
+pequena (0,951 → 0,938). Uma CDN-1 muito superior pode ser difícil de deslocar:
+parte do feedback segue honesto, o UCB1 continua explorando, e downloads pela
+rota rápida podem recompor o buffer. O momento de ativação também importa
+porque os players já acumularam reserva. Esses mecanismos ajudam a interpretar
+os resultados; não provam impossibilidade de ataque. Prolongar 10.000 ou
+12.000 ms seria outro experimento, não uma conclusão destas séries de 120 s.
+
 **Trabalhos complementares.** Comparações com epsilon-greedy, LinUCB e
 `random`, falsificação de outros campos CMCD e outras funções de recompensa
 ficam fora da amostra principal. A proteção da etapa 2 é especificada abaixo.
+Uma série exploratória adicional declarou 100 ms nas CDNs 2 e 3 com os mesmos
+três clientes modificados. Os seis controles e quatro ataques válidos estão em
+`results/qoe-final/cdn23-250-700-700-100/`, separados das séries com alvo
+CDN-1. A QoE média pós-40 s foi 0,913 nos controles e 0,912 nos ataques;
+houve 31–42 relatos falsificados aceitos por ataque. Esta série testa outro
+mecanismo e não deve ser combinada com a dose dirigida à CDN-1. Em outros
+cenários, zero relatos falsificados aceitos também pode ser um resultado
+quando não há respostas elegíveis nos caminhos alvo; registrar isso sem
+substituir a réplica por outra com maior exposição.
 
-## Etapa 4: proteção do aprendizado nas condições das etapas 1–2
+## Etapa 4: função de recompensa, separação e exposição ao ataque
+
+Antes de avaliar a solução, examinar como a regra de recompensa transforma TTLB
+em observações para o UCB1. A regra adotada pelo simulador é um exemplo de
+função racional hiperbólica decrescente, `R_lambda(t)=d/(d+lambda×t)` para
+`d>0`, `lambda>0` e `t≥0`; não é exigida por CMCD nem pelo Content Steering.
+Com `d` fixo, TTLBs menores produzem recompensas maiores, e a inclinação
+absoluta `lambda×d/(d+lambda×t)^2` diminui à medida que `t` cresce. Logo, a
+mesma alteração absoluta de TTLB pode mudar mais a recompensa na região de
+tempos baixos do que na cauda alta dessa curva. O efeito sobre o CSS, porém,
+depende das médias acumuladas, da fração de feedback contaminado e do bônus
+de exploração, não apenas da inclinação pontual.
+
+`results/research-matrices/{low,medium,high}/plots/ucb1/` permite examinar
+esse compromisso com a mesma rede NetChaos 4/12/9 ms, UCB1 e teto histórico
+de 576p. `low/medium/high` designam **lambda=1/10/25**, não níveis universais
+de sensibilidade. Cada regime contém seis controles e dois ataques por célula
+de `M=1..6` e TTLB falso de 90, 200, 340, 530, 800 ou 1.200 ms. Nos controles,
+o gap médio `mu_1−mu_2` foi 0,012/0,089/0,149, e a fração de CDN-1 em primeira
+prioridade foi 0,353/0,495/0,621, respectivamente. A separação maior ajudou
+o CSS a distinguir a melhor CDN nessa rede. Na célula `M=3`, TTLB falso de
+800 ms, `D_steer` passou de 6,4 para 24,5 e 25,9 pontos percentuais entre
+esses regimes, enquanto `Delta_egress_cost` passou de aproximadamente
+0,0031 para 0,0133 e 0,0147 USD/GB. As tabelas `controls-summary.csv`,
+`cells.csv` e `attack-runs.csv` mostram médias e runs individuais. O aumento
+simultâneo da separação honesta e do desvio observado ilustra o compromisso
+nestas condições; não estabelece que aumentar `lambda` sempre facilita um
+ataque, nem que outra função tenha o mesmo comportamento.
+
+Para dois TTLBs honestos `a<b`, a separação `R_lambda(a)−R_lambda(b)` é máxima
+em `lambda=d/sqrt(a×b)`; portanto, ela **não cresce monotonicamente** com
+`lambda`. Além disso, alterar `lambda` muda tanto as recompensas honestas
+quanto a falsa e a escala delas em relação ao bônus do UCB1. A escolha de uma
+função deve examinar o mapa de recompensas das CDNs e a influência de relatos
+plausíveis ou extremos, nas faixas de TTLB e durações reais da implantação.
+As matrizes testam somente esta função com três valores de `lambda`, não
+comparam famílias diferentes de funções nem demonstram QoE adversa.
+
+O histórico dessas matrizes limita a inferência: quatro runs com rebuffer
+foram retirados **após observar o desfecho** e arquivados em
+`results/excluded-rebuffer-20261101/`; na matriz `low`, duas células
+(`M=4/5`, TTLB=1.200 ms) foram repetidas após inspeção do mapa e seus runs
+originais removidos. Tratar esse material como análise complementar e
+exploratória, sem usar clientes ou segmentos como réplicas. A execução e a
+retomada estão em [risk-matrix.md](risk-matrix.md).
+
+## Etapa 5: proteção do aprendizado nas condições das etapas 1–2
 
 **Hipótese.** Rejeitar feedback com TTLB fora de uma faixa de referência e
 isolar sessões repetidamente atípicas deve reduzir o desvio de prioridade e
@@ -176,13 +275,17 @@ discutir essa brecha sem alegar proteção completa. A fração de relatos hones
 rejeitados em redes heterogêneas fica como limite de validade externa, não como
 experimento adicional obrigatório deste TCC.
 
-**Experimento.** Executar apenas a etapa 2: dez clientes, UCB1, `lambda=10`,
-720p/3.000 kb/s, 120 s/40 s, NetChaos 4/12/9 ms, `M=1/3/5` e TTLB falso
-530/800 ms. Seis controles e dois ataques por cada uma das seis células dão
-18 runs protegidos válidos, em raiz separada. Comparar aos runs desprotegidos
-já arquivados. Preservar slots honestos `M+1..10`, janelas, fórmulas e critérios
-de validade; controles são compartilhados entre células de cada modo. Arquivar
-plano, ordem, manifesto e hash da referência, sem repetição seletiva por efeito.
+**Experimento.** A proteção foi testada repetindo apenas a etapa 2: dez
+clientes, UCB1, `lambda=10`, 720p/3.000 kb/s, 120 s/40 s, NetChaos 4/12/9 ms,
+`M=1/3/5` e TTLB falso
+530/800 ms. Há seis controles e dois ataques por cada uma das seis células:
+18 runs protegidos válidos em `results/tcc-defense-stage2-4-12-9/`, comparados
+aos 26 runs desprotegidos de `results/tcc-final-recovery-4-12-9/` apenas nas
+células correspondentes. Os seis pilotos de referência estão em
+`results/tcc-defense-calibration/` e não integram a amostra final. Preservar
+slots honestos `M+1..10`, janelas, fórmulas e critérios de validade; controles
+são compartilhados entre células de cada modo. O plano, a ordem, o manifesto
+e o hash da referência permitem auditar a comparação.
 
 Para cada célula, calcular o efeito ataque menos média dos controles **dentro
 do mesmo modo** e depois a diferença entre efeitos com e sem proteção para
@@ -194,6 +297,13 @@ segmentos são observações internas. Como as séries são sequenciais, conferi
 deriva de recursos, cache e tempos efetivos antes de atribuir diferenças à
 defesa. A QoE pode permanecer estável mesmo com melhoria de steering/custo;
 isso é resultado, não falha do experimento.
+
+Em `plots/etapa-2/defense-comparison.csv`, as seis células mostram redução
+dos efeitos de steering e de custo calculados como ataque menos controles
+dentro de cada modo. As diferenças de QoE entre modos são pequenas nessa rede
+rápida. Interpretar esses resultados como evidência da regra implementada
+sob a referência calibrada, não como garantia para outras redes, doses ou
+funções de recompensa.
 
 **Critério de utilidade.** A defesa é útil neste cenário se reduzir de forma
 reprodutível os efeitos de steering/custo nas células em que o ataque os elevou,
@@ -329,36 +439,13 @@ hipotéticos, a diferença projetada é `V × Delta_egress_cost`. Tarifas podem 
 SKU, região e data. Logs UDP das CDNs são _best effort_, logo a completude dos bytes
 limita a estimativa.
 
-## Análise complementar de lambda e histórico auditável
-
-As matrizes existentes variaram `lambda=1,10,25`, `M=1..6` e TTLB declarado de 90, 200,
-340, 530, 800 ou 1.200 ms em UCB1, 576p e rede 4/12/9 ms. Cada regime prevê seis
-controles e dois ataques por célula. `low/medium/high` são nomes históricos para
-**valores de lambda**, não níveis universais de sensibilidade. Preservar
-`results/research-matrices/`; [risk-matrix.md](risk-matrix.md) documenta execução e
-retomada. `plot_control_sensitivity.py` resume seis controles por regime. Variação de
-lambda é complementar: muda separação honesta, recompensa falsa e escala relativa ao
-bônus do UCB1.
-
-Para `R_lambda=d/(d+lambda×ttlb)`, `|∂R/∂ttlb| = lambda×d/(d+lambda×ttlb)^2`. Para TTLBs
-`a<b`, a separação `R_lambda(a)−R_lambda(b)` atinge máximo em `lambda=d/sqrt(a×b)`. Não
-chamar lambda isoladamente de sensibilidade monotônica nem atribuir a ela sozinha uma
-diferença de ataque.
-
-Quatro runs históricos com rebuffer foram retirados das matrizes ativas **após observar
-o desfecho** e arquivados com `selection.json` em `results/excluded-rebuffer-20261101/`.
-Na matriz `low`, duas células (`M=4/5`, `ttlb=1200`) também foram repetidas após
-inspeção do mapa; seus diretórios originais foram removidos. Substituições assim são
-exploratórias, não confirmações independentes. Relatar isso no TCC; matrizes históricas
-não provam efeito de QoE. Pilotos curtos a 4/900/900 ms com quatro players sugeriram
-queda de qualidade, mas não equivalem ao desenho final de dez players e ataque após 40
-s.
-
-## Próximas alterações de código
+## Artefatos de execução e análise
 
 O runner `scripts/multi_client.py` executa controles e ataques e grava QoE em
-40–120 s e 0–120 s. `scripts/run_tcc_dose_proportion.sh` orquestra as etapas 1–2;
-`scripts/plot_tcc_series.py` analisa seus runs. A etapa 4 usa
+40–120 s e 0–120 s. `scripts/run_tcc_dose_proportion.sh` orquestra as etapas 1–2,
+`scripts/run_qoe_dose_response.sh` a etapa 3 e `scripts/plot_tcc_series.py` e
+`scripts/plot_qoe_dose_response.py` analisam seus runs. A etapa 4 usa
+`results/research-matrices/`, e a etapa 5 usa
 `scripts/calibrate_tcc_defense.sh` e `scripts/run_tcc_stage2_defended.sh`.
 Consulte [simulations.md](simulations.md)
 para comandos, calibração e retomada.
