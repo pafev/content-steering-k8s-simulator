@@ -145,7 +145,7 @@ doses diferentes têm controles próprios.
 | ------------------- | --------------: | --------------------: | ---------------------------: |
 | 250/700/700         |          10.000 |         0,899 → 0,887 |                0,678 → 0,610 |
 | 250/700/700         |          12.000 |         0,897 → 0,879 |                0,690 → 0,587 |
-| 250/700/700         |          20.000 |         0,922 → 0,836 |                0,687 → 0,540 |
+| 250/700/700         |          20.000 |         0,922 → 0,806 |                0,687 → 0,574 |
 | 100/900/900         |          20.000 |         0,921 → 0,911 |                0,894 → 0,779 |
 
 Os artefatos são `results/qoe-final/250-700-700-{10000,12000,20000}/` e
@@ -155,11 +155,10 @@ todos os controles; as alternativas tinham TTLB percebido maior que a CDN-1.
 Com 10.000 e 12.000 ms, a rota CDN-1 caiu cerca de 6,8 e 10,3 pontos
 percentuais, respectivamente, mas as diferenças médias de QoE foram apenas
 −0,012 e −0,018. Alterar o steering não implicou perda de QoE na mesma
-magnitude. Na série de 20.000 ms, a rota CDN-1 caiu cerca de 14,7 pontos
+magnitude. Na série de 20.000 ms, a rota CDN-1 caiu cerca de 11,3 pontos
 percentuais e a diferença média de QoE foi
-−0,086; os quatro ataques ainda variaram de 0,724 a 0,999. A QoE média antes
-dos 40 s já era menor nos ataques dessa série (0,605 contra 0,645 nos
-controles), exigindo cautela na atribuição de toda a diferença posterior ao
+−0,116; os quatro ataques ainda variaram de 0,724 a 0,877. A leitura das curvas anteriores aos 40 s também é necessária para
+separar diferenças de partida e reserva acumulada do efeito posterior ao
 envenenamento. A comparação é compatível com perda de QoE sob ataque forte
 neste cenário selecionado, sem estabelecer um limiar exato de dose.
 Nas séries de 12.000 ms e 100/900/900, um controle teve falha terminal e os
