@@ -2,8 +2,17 @@
 # Six shared controls; four delayed M=3 attacks for each declared TTLB.
 set -euo pipefail
 
+malicious_cdns=cdn-1
+if [[ "${1:-}" == --malicious-cdns ]]; then
+  if (($# < 2)); then
+    echo "--malicious-cdns requires a comma-separated CDN list" >&2
+    exit 2
+  fi
+  malicious_cdns="$2"
+  shift 2
+fi
 if (($# < 2)); then
-  echo "Usage: bash scripts/run_qoe_dose_response.sh FAULT-MANIFEST OUTPUT-ROOT [TTLB-MS ...]" >&2
+  echo "Usage: bash scripts/run_qoe_dose_response.sh [--malicious-cdns cdn-2,cdn-3] FAULT-MANIFEST OUTPUT-ROOT TTLB-MS [TTLB-MS ...]" >&2
   exit 2
 fi
 fault="$1"
@@ -26,13 +35,18 @@ fi
 mkdir -p "$out"
 runner=.venv/bin/python
 
-"$runner" - "$out" "$fault" "$max_video_kbps" "${doses[@]}" <<'PY'
+"$runner" - "$out" "$fault" "$max_video_kbps" "$malicious_cdns" "${doses[@]}" <<'PY'
 import hashlib, json, pathlib, random, sys
 root = pathlib.Path(sys.argv[1])
 fault = pathlib.Path(sys.argv[2])
 max_video_kbps = int(sys.argv[3])
+malicious_cdns = sys.argv[4].split(',')
+if len(set(malicious_cdns)) != len(malicious_cdns) or any(
+    cdn not in ('cdn-1', 'cdn-2', 'cdn-3') for cdn in malicious_cdns
+):
+    raise SystemExit('Supply distinct CDNs from cdn-1,cdn-2,cdn-3')
 try:
-    doses = sorted(int(value) for value in sys.argv[4:])
+    doses = sorted(int(value) for value in sys.argv[5:])
 except ValueError as error:
     raise SystemExit(f"Invalid TTLB: {error}")
 if not doses or len(doses) != len(set(doses)) or doses[0] <= 0:
@@ -45,10 +59,15 @@ dose_file.write_text(content)
 scenario_file = root / "scenario.json"
 scenario = {"fault_sha256": hashlib.sha256(fault.read_bytes()).hexdigest(),
             "ttlb_ms": doses, "malicious_count": 3, "reward_lambda": 10,
+            "malicious_cdns": malicious_cdns,
             "max_video_kbps": max_video_kbps, "buffer_trace_version": 5}
-if scenario_file.exists() and json.loads(scenario_file.read_text()) != scenario:
+existing = json.loads(scenario_file.read_text()) if scenario_file.exists() else None
+if existing is not None and existing.get('malicious_cdns', ['cdn-1']) != malicious_cdns:
+    raise SystemExit(f"Different CDNs already recorded in {scenario_file}; use a new output root")
+if existing is not None and {**existing, 'malicious_cdns': malicious_cdns} != scenario:
     raise SystemExit(f"Different scenario already recorded in {scenario_file}; use a new output root")
-scenario_file.write_text(json.dumps(scenario, indent=2) + "\n")
+if existing is None:
+    scenario_file.write_text(json.dumps(scenario, indent=2) + "\n")
 order_file = root / "order.txt"
 if not order_file.exists():
     attacks = doses * 4
@@ -81,9 +100,9 @@ if [[ "${QOE_PLAN_ONLY:-0}" == 1 ]]; then
 fi
 
 has_run() {
-  "$runner" - "$out" "$fault" "$max_video_kbps" "$1" "$2" "$3" <<'PY'
+  "$runner" - "$out" "$fault" "$max_video_kbps" "$malicious_cdns" "$1" "$2" "$3" <<'PY'
 import hashlib, json, pathlib, sys
-root, fault, max_video_kbps, kind, ttlb, target = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), int(sys.argv[3]), sys.argv[4], int(sys.argv[5]) if sys.argv[5] != '-' else 0, int(sys.argv[6])
+root, fault, max_video_kbps, malicious_cdns, kind, ttlb, target = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), int(sys.argv[3]), sys.argv[4], sys.argv[5], int(sys.argv[6]) if sys.argv[6] != '-' else 0, int(sys.argv[7])
 fault_hash = hashlib.sha256(fault.read_bytes()).hexdigest()
 matches = 0
 for path in root.glob('*/multi-*/summary.json'):
@@ -105,10 +124,10 @@ for path in root.glob('*/multi-*/summary.json'):
         and cfg.get('seconds') == 120 and cfg.get('measurement_start') == 40
         and cfg.get('replicate') == 1 and cfg.get('allow_viewer_failure')
         and cfg.get('bounded_start') and cfg.get('induce_media_error_at') is None
-        and cfg.get('require_fresh_cache')
+        and cfg.get('require_fresh_cache') and cfg.get('defense_reference_sha256') is None
         and ((kind == 'control' and cfg['malicious_count'] == 0)
              or (kind == 'attack' and cfg['malicious_count'] == 3
-                 and cfg.get('malicious_cdn') == 'cdn-1'
+                 and cfg.get('malicious_cdn') == malicious_cdns
                  and cfg.get('attack_ttlb') == ttlb
                  and cfg.get('attack_delay') == 40
                  and not cfg.get('attack_from_start')))):
@@ -136,12 +155,12 @@ while read -r kind ttlb; do
   if ((started > 0)); then warmup=(--skip-warmup); fi
   attack_args=()
   if [[ "$kind" == attack ]]; then
-    attack_args=(--malicious-count 3 --attack-ttlb "$ttlb" --attack-delay 40)
+    attack_args=(--malicious-count 3 --malicious-cdns "$malicious_cdns" --attack-ttlb "$ttlb" --attack-delay 40)
   fi
   "$runner" scripts/multi_client.py --strategy ucb1 --clients 10 \
     --seconds 120 --measurement-start 40 --reward-lambda 10 --replicate 1 \
     --max-video-kbps "$max_video_kbps" \
-    --bounded-start --require-fresh-cache --allow-viewer-failure \
+    --bounded-start --require-fresh-cache --allow-viewer-failure --require-no-defense \
     --fault-manifest "$fault" --output "$out" \
     "${attack_args[@]}" "${warmup[@]}"
   started=$((started + 1))

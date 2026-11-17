@@ -913,6 +913,11 @@ def observe(playwright, args, strategy, output, warmup=None):
                 )
             sid = start_player(page, query, defer_play=args.bounded_start)
             if role == "modified":
+                if not page.evaluate("Array.isArray(window.__cmcdLieAudit)"):
+                    raise RuntimeError(
+                        "Client image does not support the configured attack targets; "
+                        "rebuild and load the client image"
+                    )
                 modified[client]["sid"] = sid
             sessions.append({"client": client, "sid": sid, "role": role})
             record("session", client, sid=sid, role=role)
@@ -1122,7 +1127,13 @@ def observe(playwright, args, strategy, output, warmup=None):
         if modified:
             details = []
             for client, player in modified.items():
-                audit = player["page"].evaluate("window.__cmcdLieAudit || []")
+                audit = player["page"].evaluate("window.__cmcdLieAudit")
+                if audit is None:
+                    problems.append(
+                        f"Modified player {client} has no active CMCD falsification script; "
+                        "rebuild and load the client image"
+                    )
+                    audit = []
 
                 def media_identity(url):
                     parsed = urlsplit(url)
@@ -1196,7 +1207,11 @@ def observe(playwright, args, strategy, output, warmup=None):
                 if any(item["accepted_claimed_rewards"] for item in details)
                 else None,
             )
-            if not malicious["accepted_falsified"] and not args.require_defense:
+            if (not malicious["accepted_falsified"] and not args.require_defense
+                    and "," not in args.malicious_cdn and not any(
+                        "no active CMCD falsification script" in problem
+                        for problem in problems
+                    )):
                 problems.append(
                     f"No falsified {args.malicious_cdn} report was accepted for learning"
                 )
@@ -1375,6 +1390,8 @@ def main():
                         help="Save successful learned video TTLBs for defense calibration")
     parser.add_argument("--require-defense", action="store_true",
                         help="Require active telemetry defense for this run")
+    parser.add_argument("--require-no-defense", action="store_true",
+                        help="Require telemetry defense disabled for this run")
     parser.add_argument("--expected-defense-sha256",
                         help="Require the active telemetry reference to have this hash")
     parser.add_argument(
@@ -1384,7 +1401,8 @@ def main():
         help="Number of players replaced with modified players",
     )
     parser.add_argument(
-        "--malicious-cdn", choices=("cdn-1", "cdn-2", "cdn-3"), default="cdn-1"
+        "--malicious-cdn", "--malicious-cdns", dest="malicious_cdn",
+        default="cdn-1", help="Comma-separated CDNs whose successful video TTLB is falsified",
     )
     parser.add_argument(
         "--attack-ttlb",
@@ -1403,6 +1421,12 @@ def main():
         help="NetChaos manifest applied after dash-client pods are ready",
     )
     args = parser.parse_args()
+    if args.require_defense and args.require_no_defense:
+        parser.error("--require-defense and --require-no-defense are mutually exclusive")
+    malicious_cdns = args.malicious_cdn.split(",")
+    if (len(set(malicious_cdns)) != len(malicious_cdns)
+            or any(cdn not in ("cdn-1", "cdn-2", "cdn-3") for cdn in malicious_cdns)):
+        parser.error("--malicious-cdns must list distinct CDNs from cdn-1,cdn-2,cdn-3")
     parsed_mpd = urlsplit(args.mpd)
     if (
         parsed_mpd.scheme != "https"
@@ -1466,6 +1490,8 @@ def main():
             defense_health = json.load(response)
         if args.require_defense and not defense_health.get("defense_enabled"):
             raise RuntimeError("Telemetry defense is not enabled")
+        if args.require_no_defense and defense_health.get("defense_enabled"):
+            raise RuntimeError("Telemetry defense is enabled; disable it before an unprotected run")
         if args.expected_defense_sha256 and defense_health.get("defense_reference_sha256") != args.expected_defense_sha256:
             raise RuntimeError("Telemetry defense reference differs from plan")
         if args.capture_video_feedback and defense_health.get("defense_enabled"):

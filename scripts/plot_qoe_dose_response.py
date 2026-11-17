@@ -72,7 +72,7 @@ def read_run(path):
     }
 
 
-def validate(runs, doses):
+def validate(runs, doses, malicious_cdns="cdn-1"):
     if len({run["run_id"] for run in runs}) != len(runs):
         raise ValueError("Duplicate run IDs")
     controls = [run for run in runs if run["kind"] == "control"]
@@ -108,14 +108,15 @@ def validate(runs, doses):
         if any(cfg.get(key) != reference.get(key) for key in keys):
             raise ValueError(f"Unmatched conditions: {run['summary_path']}")
         if (not cfg.get("allow_viewer_failure") or not cfg.get("require_fresh_cache")
-            or not cfg.get("bounded_start") or cfg.get("induce_media_error_at") is not None):
+            or not cfg.get("bounded_start") or cfg.get("induce_media_error_at") is not None
+            or cfg.get("defense_reference_sha256") is not None):
             raise ValueError(f"QoE/cache validation disabled: {run['summary_path']}")
         if run["kind"] == "control":
             if cfg["malicious_count"] != 0:
                 raise ValueError("Invalid control")
         elif (
             cfg["malicious_count"] != 3
-            or cfg["malicious_cdn"] != "cdn-1"
+            or cfg["malicious_cdn"] != malicious_cdns
             or cfg["attack_delay"] != 40
             or cfg.get("attack_from_start")
             or run["ttlb_ms"] not in doses
@@ -396,9 +397,12 @@ def main():
     if len(set(doses)) != len(doses) or any(value <= 0 for value in doses):
         parser.error("doses.txt must contain unique positive TTLBs")
     doses.sort()
+    scenario_file = args.root / "scenario.json"
+    scenario = json.loads(scenario_file.read_text()) if scenario_file.exists() else {}
+    malicious_cdns = ",".join(scenario.get("malicious_cdns", ["cdn-1"]))
     found = [read_run(path) for path in sorted(args.root.glob("*/multi-*/summary.json"))]
     runs = [run for run in found if run is not None]
-    controls, attacks = validate(runs, doses)
+    controls, attacks = validate(runs, doses, malicious_cdns)
     output = args.output or args.root / "plots"
     output.mkdir(parents=True, exist_ok=True)
     write_csv(
